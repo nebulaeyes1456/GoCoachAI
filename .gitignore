@@ -1,0 +1,45 @@
+# ---- Python ----
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- 构建产物 ----
+build/
+dist/
+*.spec
+*.exe
+!engine/*.exe
+*.zip
+*.log
+
+# ---- 本地数据 / 密钥 / 用户数据（勿提交） ----
+data/*
+!data/.gitkeep
+!data/config.example.yaml
+backend/config.yaml
+engine/KataGoData/
+
+# ---- 调试与临时文件 ----
+out*.txt
+probe*.py
+probe*.txt
+tests_full.txt
+tmp_*.py
+scripts/tmp_*.py
+scripts/_*.png
+classic_import.txt
+classic_recheck.txt
+fast_reg.txt
+m2_run.txt
+m2_run2.txt
+
+# ---- 内部文档（中文，含项目内部细节） ----
+更新日志.md
+经验总结.md
+工程说明.md
+项目书v2.md
+
+# ---- IDE ----
+.idea/
+.vscode/

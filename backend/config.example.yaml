@@ -1,0 +1,58 @@
+# GoCoachAI 本地配置示例
+# 复制为 backend/config.yaml 后按需修改；config.yaml 不入库。
+# 注意：本文件不含任何真实密钥。
+
+katago:
+  executable: engine/katago.exe        # 或 opencl 版路径（benchmark.py 会自动回填）
+  executable_cpu: engine/katago-eigenavx2.exe  # CPU 回退版（无 GPU 时使用）
+  backend: auto                        # auto|cpu|opencl（auto=自动探测，无 GPU 回退 CPU）
+  # detected_backend: opencl           # 探测结果自动写入（backend=auto 时），勿手改
+  model: engine/b10c128.bin.gz
+  max_visits:
+    fast: 200
+    standard: 600
+    fine: 1500
+  threads: 12                          # numSearchThreads（写进 engine/analysis_example.cfg）
+  analysis_threads: 1                  # numAnalysisThreads：1=顺序分析（避免 CPU 争抢）
+
+coach:
+  provider: deepseek                   # deepseek | ollama
+  api_key: ""                          # 填真实 key 到 config.yaml，勿写入本文件
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  ollama:
+    base_url: "http://127.0.0.1:11434"
+    model: "qwen2.5:14b"
+  pricing:                             # 成本换算单价（元/百万 token，可配置）
+    deepseek-chat:
+      input: 2.0
+      output: 8.0
+
+review:
+  profile: fast                        # fast/standard/fine（对应 §4.4 的 profile）
+  blunder_threshold: 0.08
+  question_threshold: 0.03
+  good_threshold: 0.06
+  handicap_relax: 1.5                   # 让子棋（HA>0/AB）关键手阈值放宽系数（窗口1）
+
+problems:                               # 题目系统（窗口3）
+  crop_radius: 4                        # 错题局部裁剪半径（路）
+  candidate_radius: 1                   # 候选点范围（失误点周围半径，路）
+  max_candidates: 12                    # 单题验证候选点上限
+  verify_profile:
+    life_death: fine                    # 死活/对杀用 fine 档深搜验证
+    capturing_race: fine
+    endgame: standard
+    middle: standard
+  urgency_max_winrate: 0.3              # 死活/对杀题：pass 后胜率须低于此值
+  endgame_move_fraction: 0.8            # 手数占比超过此值判为官子阶段
+  extract_signal_threshold: 0.06        # M3 提取：相邻两手 delta 反转的最小幅值
+  endgame_swing_threshold: 0.12         # M3 提取：终局附近 winrate 波动阈值
+  extract_review_timeout: 900           # M3 提取：复盘等待超时（秒）
+
+server:
+  port: 8765
+  log_file: data/app.log               # 服务日志（>5MB 轮转 .1 备份）
+
+budget:
+  token_limit_month: 30                # 元

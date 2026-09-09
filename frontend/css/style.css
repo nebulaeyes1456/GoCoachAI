@@ -1,0 +1,679 @@
+/* 弈友 GoCoachAI 前端样式（窗口4）：简洁围棋风格（米色棋盘/深色文字），桌面优先。 */
+
+:root {
+  --bg: #f6f4ef;
+  --panel: #fffdf8;
+  --border: #e2dccd;
+  --text: #33302a;
+  --muted: #8a8375;
+  --accent: #2b6cb0;
+  --accent-dark: #235a92;
+  --wood: #dcb35c;
+  --wood-line: #6b5636;
+  --red: #c53030;
+  --yellow: #d69e2e;
+  --green: #2f855a;
+  --shadow: 0 1px 3px rgba(90, 70, 30, 0.12), 0 2px 8px rgba(90, 70, 30, 0.08);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-dark); }
+
+h1 { font-size: 1.35rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
+h3 { font-size: .95rem; margin: 0 0 .4rem; }
+
+/* ---------------- 顶栏 ---------------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: .55rem 1.2rem;
+  background: #2c2a24;
+  color: #f5f1e6;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.topbar .logo { font-weight: 700; letter-spacing: .5px; white-space: nowrap; }
+.topnav { display: flex; gap: .2rem; }
+.topnav a {
+  color: #e8e2d2;
+  padding: .25rem .8rem;
+  border-radius: 6px;
+}
+.topnav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.topnav a.active { background: var(--accent); color: #fff; }
+.topbar .spacer { flex: 1; }
+.source-switch { display: flex; align-items: center; gap: .4rem; color: #e8e2d2; font-size: .85rem; }
+.source-switch select {
+  background: #45423a; color: #f5f1e6; border: 1px solid #5a564a;
+  border-radius: 5px; padding: .2rem .35rem; font-size: .85rem;
+}
+
+/* ---------------- 按钮 ---------------- */
+.btn {
+  display: inline-block;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  border-radius: 6px;
+  padding: .4rem .9rem;
+  font-size: .9rem;
+  cursor: pointer;
+  transition: all .15s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #fff; }
+.btn-ghost { background: transparent; border-color: transparent; }
+.btn-sm { padding: .2rem .55rem; font-size: .82rem; }
+
+/* ---------------- 布局 ---------------- */
+.page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 1rem 1.2rem 2.5rem;
+}
+.grid-main { display: grid; grid-template-columns: 580px 1fr; gap: 1rem; align-items: start; }
+.grid-main-2 { display: grid; grid-template-columns: 300px 1fr; gap: 1rem; align-items: start; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .9rem 1rem;
+  box-shadow: var(--shadow);
+  margin-bottom: 1rem;
+}
+.panel-title { font-weight: 700; margin-bottom: .55rem; display: flex; align-items: center; gap: .5rem; }
+
+.muted { color: var(--muted); font-size: .85rem; }
+.small { font-size: .82rem; }
+.goc-loading { color: var(--muted); padding: .6rem 0; }
+.goc-error { color: var(--red); padding: .6rem 0; }
+.goc-empty { color: var(--muted); padding: .8rem 0; text-align: center; }
+
+.row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+
+/* ---------------- 表单 ---------------- */
+input[type=text], input[type=number], textarea, select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .35rem .55rem;
+  font-size: .9rem;
+  background: #fff;
+  color: var(--text);
+  font-family: inherit;
+}
+textarea { width: 100%; resize: vertical; min-height: 84px; }
+label.fld { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; color: var(--muted); }
+label.fld > span { color: var(--text); }
+
+/* ---------------- 棋盘 ---------------- */
+.goban-frame { display: inline-block; }
+.goban-mid { display: flex; align-items: stretch; }
+.goban-main { position: relative; display: flex; flex-direction: column; }
+.goban-host { line-height: 0; border: 1px solid var(--wood-line); border-radius: 4px; overflow: hidden; }
+.goban-host canvas { display: block; background: var(--wood); }
+.goban-coords { position: relative; }
+.goban-coords-left { width: 26px; }
+.goban-coords-bottom { height: 22px; margin-top: 2px; }
+.goban-label {
+  position: absolute;
+  color: var(--muted);
+  user-select: none;
+  line-height: 1;
+}
+.goban-coords-left .goban-label { right: 6px; transform: translateY(-50%); }
+.goban-coords-bottom .goban-label { top: 2px; transform: translateX(-50%); }
+.board-tip { font-size: .8rem; color: var(--muted); margin-top: .3rem; }
+
+/* ---------------- 进度条 ---------------- */
+.progress-outer {
+  height: 14px;
+  background: #efe9da;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.progress-inner {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #63b3ed);
+  border-radius: 8px;
+  transition: width .25s ease;
+  width: 0;
+}
+.progress-text { font-size: .82rem; color: var(--muted); margin-top: .3rem; }
+
+/* ---------------- M1 复盘：进度 / 讲解面板 ---------------- */
+.review-status { margin-top: .6rem; }
+.explain-meta {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: .4rem .6rem;
+  margin: .2rem 0 .6rem;
+  background: #fbfaf4;
+}
+.explain-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  font-size: .84rem;
+  padding: .08rem 0;
+  flex-wrap: wrap;
+}
+.explain-meta-row code {
+  font-size: .78rem;
+  color: var(--accent-dark);
+  font-family: Consolas, "Courier New", monospace;
+}
+
+/* ---------------- 胜率曲线 ---------------- */
+.curve-box { width: 100%; }
+.curve-canvas { width: 100%; display: block; border: 1px solid var(--border); border-radius: 6px; background: #fffef9; }
+.curve-legend { display: flex; gap: 1rem; font-size: .8rem; color: var(--muted); margin-top: .35rem; flex-wrap: wrap; }
+.legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .3rem; vertical-align: -1px; }
+
+/* ---------------- 关键手列表 ---------------- */
+.keymove-list { display: flex; flex-direction: column; gap: .35rem; max-height: 420px; overflow-y: auto; }
+.keymove-item {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .4rem .55rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  background: #fff;
+}
+.keymove-item:hover { border-color: var(--accent); }
+.keymove-item.active { border-color: var(--accent); background: #eef5fc; }
+.keymove-num { min-width: 42px; font-weight: 700; }
+.keymove-cat { font-size: .78rem; padding: .05rem .4rem; border-radius: 4px; color: #fff; }
+.keymove-cat.blunder { background: var(--red); }
+.keymove-cat.question { background: var(--yellow); }
+.keymove-cat.good { background: var(--green); }
+.keymove-info { color: var(--muted); font-size: .8rem; }
+
+/* ---------------- 讲解面板 ---------------- */
+.explain-section { margin-bottom: .6rem; }
+.explain-label { font-weight: 700; font-size: .85rem; color: var(--accent-dark); margin-bottom: .15rem; }
+.explain-text { white-space: pre-wrap; }
+.var-controls { display: flex; align-items: center; gap: .5rem; margin-top: .5rem; }
+.var-hint { color: var(--muted); font-size: .82rem; }
+.takeaway-box {
+  border-left: 3px solid var(--yellow);
+  background: #fdf8ec;
+  padding: .45rem .7rem;
+  border-radius: 0 6px 6px 0;
+  font-size: .9rem;
+}
+
+/* ---------------- 统计徽章 ---------------- */
+.stats-row { display: flex; gap: .8rem; flex-wrap: wrap; }
+.stat-chip {
+  padding: .2rem .7rem;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: .85rem;
+}
+.stat-chip b { margin-left: .25rem; }
+
+/* ---------------- 拖拽导入 ---------------- */
+.dropzone {
+  border: 2px dashed #d8cba6;
+  border-radius: 10px;
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .15s;
+  background: #fffef8;
+}
+.dropzone:hover, .dropzone.dragover { border-color: var(--accent); color: var(--accent); background: #f2f8ff; }
+
+/* ---------------- 徽章 / 用量 ---------------- */
+.badge { display: inline-block; padding: .05rem .5rem; border-radius: 5px; font-size: .8rem; }
+.badge-ok { background: #e6f6ec; color: var(--green); }
+.badge-no { background: #fdecec; color: var(--red); }
+.usage-bar { height: 8px; border-radius: 5px; background: #efe9da; overflow: hidden; margin: .3rem 0; }
+.usage-fill { height: 100%; background: var(--accent); border-radius: 5px; }
+.usage-text { font-size: .8rem; color: var(--muted); }
+
+/* ---------------- 弹窗 ---------------- */
+.goc-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(40, 32, 15, .45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.goc-modal {
+  background: var(--panel);
+  border-radius: 12px;
+  width: 440px;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0,0,0,.3);
+}
+.goc-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .8rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.goc-modal-head h3 { margin: 0; }
+.goc-modal-close { border: none; background: none; font-size: 1rem; cursor: pointer; color: var(--muted); }
+.goc-modal-body { padding: 1rem 1.1rem; }
+.goc-modal-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1rem; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: .55rem .8rem;
+  align-items: center;
+}
+.settings-grid > label { color: var(--muted); font-size: .85rem; }
+.settings-grid input[type=number], .settings-grid select { width: 100%; }
+
+/* ---------------- Toast ---------------- */
+#goc-toasts {
+  position: fixed; top: 56px; right: 16px;
+  display: flex; flex-direction: column; gap: .5rem;
+  z-index: 200;
+}
+.goc-toast {
+  background: #2c2a24; color: #f5f1e6;
+  padding: .55rem 1rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  max-width: 340px;
+  font-size: .88rem;
+  opacity: 1;
+  transition: opacity .3s, transform .3s;
+}
+.goc-toast-success { background: var(--green); }
+.goc-toast-error { background: var(--red); }
+.goc-toast-out { opacity: 0; transform: translateY(-8px); }
+
+/* ---------------- 练习页 ---------------- */
+.problem-list { display: flex; flex-direction: column; gap: .4rem; max-height: 560px; overflow-y: auto; }
+.problem-item {
+  padding: .5rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  background: #fff;
+}
+.problem-item:hover { border-color: var(--accent); }
+.problem-item.active { border-color: var(--accent); background: #eef5fc; }
+.problem-item .theme-tag { margin-right: .4rem; }
+.problem-rank { margin-left: .4rem; }
+.problem-hint { margin-top: .15rem; }
+.theme-tag {
+  display: inline-block;
+  font-size: .76rem;
+  padding: .02rem .45rem;
+  border-radius: 4px;
+  background: #ede7d8;
+  color: #6b5d3e;
+}
+.feedback-ok { color: var(--green); font-weight: 700; }
+.feedback-no { color: var(--red); font-weight: 700; }
+
+/* M2 练习视图布局：左题库 + 右试下棋盘 */
+.practice-grid {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+.practice-feedback {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: .55rem .7rem;
+  margin-top: .6rem;
+  background: #fbfaf4;
+}
+.practice-feedback .explain-text { margin-top: .2rem; }
+#btn-trial.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* M2 答疑视图 */
+#view-ask { max-width: 860px; }
+.ask-answer {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .6rem .8rem;
+  margin-top: .6rem;
+  background: #fbfaf4;
+}
+
+/* ---------------- 答疑页 ---------------- */
+.color-pick { display: flex; gap: .5rem; }
+.color-btn {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.color-btn.black { background: #222; border-color: #222; }
+.color-btn.white { background: #fafafa; border-color: #bbb; }
+.color-btn.sel-black { outline: 3px solid rgba(43,108,176,.5); }
+.color-btn.sel-white { outline: 3px solid rgba(43,108,176,.5); }
+
+@media (max-width: 980px) {
+  .grid-main, .grid-main-2 { grid-template-columns: 1fr; }
+  .practice-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------------- M0 复盘页（WGo.js 棋盘 + 播放控制 + 曲线） ---------------- */
+[v-cloak] { display: none; }
+
+.logo-sub { font-weight: 400; font-size: .85rem; color: #c9c2ad; }
+.topnav-disabled { color: #8a8375; padding: .25rem .8rem; font-size: .85rem; cursor: default; }
+.topbar .gear { font-size: 1.05rem; color: #e8e2d2; }
+
+/* 变化播放浮层控制条 */
+.pv-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: .4rem;
+  background: #2c2a24;
+  color: #f5f1e6;
+  padding: .45rem .9rem;
+  border-radius: 24px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  z-index: 90;
+}
+.pv-bar .pv-label { font-size: .82rem; font-weight: 700; margin-right: .3rem; }
+.pv-bar .pv-progress { font-size: .82rem; color: #c9c2ad; min-width: 72px; text-align: center; }
+.pv-bar .btn { background: #45423a; color: #f5f1e6; border-color: #5a564a; }
+.pv-bar .btn:hover { border-color: var(--accent); color: #fff; }
+.pv-bar .btn-primary { background: var(--accent); border-color: var(--accent); }
+
+.pv-note {
+  width: 100%;
+  font-size: .8rem;
+  line-height: 1.45;
+  color: #f5f1e6;
+  background: #3a372f;
+  border-radius: 8px;
+  padding: .35rem .6rem;
+}
+.pv-note.pv-summary { color: #ffd98a; }
+
+.hint-card {
+  border: 1px solid var(--line, #ddd);
+  border-left: 4px solid #d69e2e;
+  border-radius: 6px;
+  padding: .6rem .7rem;
+  background: #fffdf5;
+}
+.hint-card.bad { border-left-color: var(--red, #c53030); }
+.hint-card .hint-title { font-weight: 700; margin-bottom: .25rem; }
+.hint-card .hint-body { font-size: .85rem; line-height: 1.5; }
+.tip-text {
+  margin-top: .5rem;
+  font-size: .85rem;
+  line-height: 1.55;
+  color: #444;
+  background: #f7f5ef;
+  border-radius: 6px;
+  padding: .5rem .6rem;
+}
+
+.sgf-panel textarea {
+  min-height: 68px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: .8rem;
+  line-height: 1.5;
+}
+.sgf-actions { margin-top: .55rem; }
+.load-error { color: var(--red); font-size: .85rem; }
+
+/* WGo 棋盘容器：底色/圆角/阴影由 CSS 提供（Board 的 wood1.jpg 未随库附带） */
+.board-frame { position: relative; width: 100%; max-width: 544px; margin: 0 auto; }
+#board-host { display: flex; justify-content: center; }
+#practice-board-host { display: flex; justify-content: center; }
+#board-host .wgo-board,
+#practice-board-host .wgo-board {
+  box-sizing: border-box;  /* 1px 边框计入宽高，不再裁切内部 canvas */
+  position: relative;
+  /* WGo 内部各 canvas 层 z-index 高达 100~300（阴影/网格/棋子层），
+     若不圈住会参与页面根层叠上下文，盖住 sticky 顶栏(z50)与弹窗(z100)。
+     这里创建独立层叠上下文，把棋盘内层锁定在容器内。 */
+  z-index: 1;
+  isolation: isolate;
+  border: 1px solid var(--wood-line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  background: linear-gradient(160deg, #e3bd72 0%, #d3a652 55%, #c99a45 100%);
+  overflow: hidden;
+}
+
+.player-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: .6rem;
+  font-size: .85rem;
+  color: var(--muted);
+}
+.turn-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid #9a8f7a;
+  box-shadow: inset 0 0 2px rgba(0,0,0,.25);
+}
+.turn-dot.turn-b { background: #1c1c1c; }
+.turn-dot.turn-w { background: #fafafa; }
+
+.controls {
+  display: flex;
+  gap: .55rem;
+  justify-content: center;
+  margin-top: .8rem;
+}
+.controls .btn { min-width: 2.7rem; font-size: 1rem; padding: .38rem .55rem; }
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  margin-top: .8rem;
+}
+.slider-row input[type=range] { flex: 1; }
+
+.move-strip {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 4px;
+  margin-top: .8rem;
+}
+.move-btn {
+  padding: .2rem 0;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+  font-size: .8rem;
+  color: var(--text);
+  transition: all .12s;
+}
+.move-btn:hover { border-color: var(--accent); }
+.move-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.move-btn.black { background: #2c2a24; color: #eee; }
+.move-btn.black.active { background: var(--accent); color: #fff; }
+
+.curve-canvas { width: 100%; height: 170px; }
+
+.sys-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .45rem 0;
+  border-bottom: 1px dashed var(--border);
+}
+.sys-row:last-of-type { border-bottom: none; }
+.sys-row select { min-width: 130px; }
+
+/* 记谱视图：19 路为主，棋盘更大 */
+#view-note { grid-template-columns: 620px 1fr; }
+#view-note .board-frame { max-width: 600px; }
+#view-note .cand-list { display: flex; flex-direction: column; gap: .3rem; }
+.cand-item { display: flex; gap: .6rem; align-items: baseline; padding: .25rem .5rem; background: #f5f1e6; border-radius: 6px; }
+.cand-list .cand-item { margin-bottom: .25rem; }
+
+/* 棋盘下方控件浮在 WGo canvas 之上（棋盘放大后 frame 底部与按钮行重叠，
+   canvas 会拦截按钮点击——「目数热图」点不动就是这个原因） */
+.controls, .slider-row, .move-strip { position: relative; z-index: 30; }
+
+/* 练习目标提示条 */
+.practice-goal {
+  margin: .3rem 0 .5rem; padding: .4rem .6rem;
+  background: #fdf6e3; border: 1px solid #e8d9a8; border-radius: 8px;
+  font-size: .88rem; color: #7a5b1e;
+}
+
+/* 目数热图叠加层（KataGo ownership，非棋盘渲染） */
+.board-frame { position: relative; }
+/* 热图层必须低于棋盘层（.wgo-board z1）：
+   WGo 各 canvas 透明，热图透过棋盘显示；坐标画在棋盘 grid 层上，
+   热图在下 → 方块不再淹没四周坐标文字（用户「坐标被遮挡」的最终根因） */
+.heat-canvas { position: absolute; z-index: 400; pointer-events: none; opacity: .92; }
+/* 练习题库分页控件 */
+.pager { display: flex; align-items: center; gap: .5rem; margin-top: .5rem; }
+.pager .btn:disabled { opacity: .4; cursor: default; }
+/* 练习做题子页面（点击题目后进入） */
+.solve-page { max-width: 1100px; margin: 0 auto; }
+.solve-grid { display: flex; gap: 1.2rem; align-items: flex-start; }
+.solve-board { flex: 0 0 auto; }
+.solve-side { flex: 1 1 auto; min-width: 280px; }
+.practice-grid.practice-list-only { grid-template-columns: 1fr !important; }
+.practice-list-only .col-library { width: 100% !important; }
+.practice-list-only .col-library { max-width: 1400px; margin: 0 auto; }
+.practice-list-only .problem-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: .45rem; }
+@media (max-width: 760px) {
+  .practice-list-only .problem-list { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .solve-grid { flex-direction: column; }
+  .solve-board { width: 100%; }
+}
+.voice-select { margin-left: .2rem; padding: .2rem .35rem; font-size: .85rem; }
+.deep-title { margin: .2rem 0 .4rem; font-size: 1.05rem; }
+
+
+/* 答疑预设问题（棋理快捷提问） */
+.ask-presets { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .15rem 0 .55rem; }
+.preset-chip { font-size: .78rem; padding: .18rem .55rem; border: 1px solid #d8d0bd;
+  background: #faf7ef; color: #5b5342; border-radius: 999px; cursor: pointer; }
+.preset-chip:hover { background: #efe9d9; border-color: #c9bfa4; }
+
+/* ===== 同步讲棋（讲解分段与棋盘变化联动） ===== */
+.sync-box { margin-top:.6rem; padding:.6rem .7rem; border:1px solid #e2d7c3; border-radius:.5rem; background:#fbf7ef; }
+.sync-badges { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.35rem; }
+.sync-badge { font-size:.72rem; padding:.15rem .5rem; border-radius:999px; background:#e9dfc8; color:#6b5330; }
+.sync-badge-type { background:#dff0e4; color:#1f5b35; font-weight:600; }
+.sync-segments { display:flex; flex-direction:column; gap:.3rem; }
+.sync-seg { display:flex; align-items:flex-start; gap:.45rem; padding:.4rem .55rem; border-radius:.4rem; background:#fff; border:1px solid #eee3cd; cursor:pointer; transition:background .15s; }
+.sync-seg:hover { background:#f7f0df; }
+.sync-seg.active { background:#fff7e0; border-color:#d69e2e; box-shadow:0 0 0 1px #d69e2e55; }
+.sync-seg-num { flex:none; width:1.15rem; height:1.15rem; line-height:1.15rem; text-align:center; border-radius:50%; background:#e9dfc8; color:#6b5330; font-size:.72rem; margin-top:.1rem; }
+.sync-seg.active .sync-seg-num { background:#d69e2e; color:#fff; }
+.sync-seg-text { flex:1; font-size:.84rem; color:#3c3628; line-height:1.5; }
+.sync-seg-steps { flex:none; font-size:.7rem; color:#a0875a; margin-top:.15rem; }
+
+/* ===== 两栏独立滚动（棋盘常驻视口，讲解面板独立滚动） ===== */
+/* 复盘：载入区固定，两栏占满剩余视口并各自滚动 */
+@media (min-width: 1100px) {
+  .page { padding: .45rem .9rem 0; }
+  #view-review {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 62px);
+    overflow: hidden;
+  }
+  #view-review .sgf-panel,
+  #view-review .review-status { flex: 0 0 auto; }
+  #view-review .sgf-panel textarea { height: 2.6rem; min-height: 2.6rem; }
+  #view-review .grid-main {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+    overflow: hidden;
+  }
+  #view-review .grid-main > .col-board,
+  #view-review .grid-main > .col-side {
+    overflow-y: auto;
+    min-height: 0;
+    padding-right: .3rem;
+  }
+  /* 做题页：标题/目标固定，题面棋盘与右侧反馈各自滚动 */
+  .solve-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 62px);
+    overflow: hidden;
+  }
+  .solve-page > .panel,
+  .solve-page > .practice-goal,
+  .solve-page > .goc-loading { flex: 0 0 auto; }
+  .solve-page .solve-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+    overflow: hidden;
+  }
+  .solve-page .solve-board,
+  .solve-page .solve-side {
+    overflow-y: auto;
+    min-height: 0;
+    padding-right: .3rem;
+  }
+}
+
+/* ===== 载入面板折叠 + 棋盘自适应视口高度（左栏免滚动） ===== */
+.sgf-panel { padding: .5rem .8rem; }
+.sgf-panel .panel-title { margin-bottom: 0; }
+.sgf-panel textarea { margin-top: .5rem; }
+#view-review .col-board { overflow-y: auto; }            /* 保底：极端矮窗口可滚动到按钮 */
+#view-review:not(.sgf-open) .board-frame {
+  max-width: min(544px, calc(100vh - 385px));   /* 折叠态：棋盘+按钮全部可见、无需滚动 */
+}
+#view-review.sgf-open .board-frame {
+  max-width: min(544px, calc(100vh - 520px));
+}
+.solve-board .board-frame { max-width: min(544px, calc(100vh - 205px)); }
+/* 控制条紧凑化：按钮缩小、单行排布 */
+.controls { flex-wrap: wrap; gap: .4rem; margin-top: .55rem; }
+.controls .btn { min-width: 2.15rem; font-size: .92rem; padding: .28rem .42rem; }
+.slider-row { margin-top: .5rem; }
+.player-bar { margin-top: .4rem; }
+/* 手数条：单行横向滚动，省高度 */
+.move-strip { display: flex; overflow-x: auto; padding-bottom: 5px; margin-top: .5rem; }
+.move-strip .move-btn { flex: 0 0 2.15rem; }

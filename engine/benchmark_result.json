@@ -1,0 +1,24 @@
+{
+  "visits": 200,
+  "turns": 20,
+  "results": {
+    "opencl": {
+      "exe": "C:\\Users\\31878\\Documents\\GoCoachAI\\engine\\katago-opencl.exe",
+      "mode": "engine-protocol",
+      "total_seconds": 16.73,
+      "seconds_per_move": 0.836,
+      "ok": true
+    },
+    "eigenavx2": {
+      "exe": "C:\\Users\\31878\\Documents\\GoCoachAI\\engine\\katago-eigenavx2.exe",
+      "mode": "engine-protocol",
+      "total_seconds": 98.919,
+      "seconds_per_move": 4.946,
+      "ok": true
+    }
+  },
+  "recommended": "opencl",
+  "recommended_exe": "engine/katago-opencl.exe",
+  "note": "OpenCL（核显）快于 EigenAVX2",
+  "config_written": true
+}

@@ -1,0 +1,6 @@
+{
+  "opencl": "C:\\Users\\31878\\Documents\\GoCoachAI\\engine\\katago-opencl.exe",
+  "eigenavx2": "C:\\Users\\31878\\Documents\\GoCoachAI\\engine\\katago-eigenavx2.exe",
+  "model": "C:\\Users\\31878\\Documents\\GoCoachAI\\engine\\b10c128.bin.gz",
+  "backup_model": "C:\\Users\\31878\\Documents\\GoCoachAI\\engine\\b6c96.bin.gz"
+}

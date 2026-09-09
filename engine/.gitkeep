@@ -1,0 +1,4 @@
+# 引擎与模型目录占位
+
+本目录存放 KataGo 可执行文件与模型权重（不入 git，由 `scripts/download_katago.py` 下载，窗口1 实现）。
+配置见 `backend/config.yaml` 的 `katago` 段（默认 `engine/katago.exe` 与 `engine/b10c128.bin.gz`）。

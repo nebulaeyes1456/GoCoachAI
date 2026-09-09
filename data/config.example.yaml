@@ -1,0 +1,53 @@
+# YiYou configuration template.
+# Copy this file to data/config.yaml and fill in your own values.
+# NEVER commit data/config.yaml — it contains your API key.
+
+katago:
+  executable: engine/katago-opencl.exe
+  executable_cpu: engine/katago-eigenavx2.exe
+  backend: auto
+  model: engine/b10c128.bin.gz
+  max_visits:
+    fast: 400
+    standard: 1200
+    fine: 3000
+  threads: 12
+  analysis_threads: 1
+  detected_backend: opencl
+coach:
+  provider: deepseek        # deepseek | ollama
+  api_key: YOUR_API_KEY_HERE
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  ollama:
+    base_url: http://127.0.0.1:11434
+    model: qwen2.5:14b
+  pricing:
+    deepseek-chat:
+      input: 2.0
+      output: 8.0
+review:
+  profile: fine
+  blunder_threshold: 0.12
+  question_threshold: 0.06
+  good_threshold: 0.06
+  handicap_relax: 1.5
+problems:
+  crop_radius: 4
+  candidate_radius: 1
+  max_candidates: 12
+  verify_profile:
+    life_death: fine
+    capturing_race: fine
+    endgame: standard
+    middle: standard
+  urgency_max_winrate: 0.3
+  endgame_move_fraction: 0.8
+  extract_signal_threshold: 0.06
+  endgame_swing_threshold: 0.12
+  extract_review_timeout: 900
+server:
+  port: 8765
+  log_file: data/app.log
+budget:
+  token_limit_month: 30

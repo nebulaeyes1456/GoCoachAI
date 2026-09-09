@@ -1,0 +1,723 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>弈友 v2</title>
+  <link rel="stylesheet" href="css/style.css?v=20260910j">
+</head>
+<body>
+<div id="app" v-cloak>
+  <!-- 变化播放浮层控制条（KifuReader 步进） -->
+  <div class="pv-bar" id="pv-bar" v-if="pvOpen">
+    <span class="pv-label">变化播放</span>
+    <button class="btn btn-sm" id="btn-pv-start" title="回到起点" @click="pvToStart">&#9198;</button>
+    <button class="btn btn-sm" id="btn-pv-prev" title="上一步" @click="pvStepPrev">&#9194;</button>
+    <button class="btn btn-sm btn-primary" id="btn-pv-auto" @click="pvToggleAuto">
+      {{ pvPlaying ? '&#9208;' : '&#9654;' }}
+    </button>
+    <button class="btn btn-sm" id="btn-pv-next" title="下一步" @click="pvStepNext">&#9193;</button>
+    <button class="btn btn-sm" id="btn-pv-end" title="到结尾" @click="pvToEnd">&#9197;</button>
+    <span class="pv-progress" id="pv-progress">{{ pvIndex }} / {{ pvTotal }} 步</span>
+    <button class="btn btn-sm" id="btn-pv-exit" @click="pvStop()">退出播放</button>
+    <div class="pv-note" v-if="penaltyNoteText" id="pv-note">{{ penaltyNoteText }}</div>
+    <div class="pv-note pv-summary" v-if="penaltySummary && pvIndex >= pvTotal" id="pv-summary">{{ penaltySummary }}</div>
+  </div>
+  <!-- 顶栏：标题 / 导航占位 / 数据源 / 设置齿轮 -->
+  <header class="topbar">
+    <span class="logo">弈友 v2 <span class="logo-sub" id="logo-sub">· {{ viewName }}</span></span>
+    <nav class="topnav">
+      <a id="tab-review" :class="{ active: view === 'review' }" href="javascript:void(0)" @click="switchView('review')">复盘</a>
+      <a id="tab-practice" :class="{ active: view === 'practice' }" href="javascript:void(0)" @click="switchView('practice')">练习</a>
+      <a id="tab-note" :class="{ active: view === 'note' }" href="javascript:void(0)" @click="switchView('note')">记谱</a>
+      <a id="tab-play" :class="{ active: view === 'play' }" href="javascript:void(0)" @click="switchView('play')">对弈</a>
+      <a id="tab-ask" :class="{ active: view === 'ask' }" href="javascript:void(0)" @click="switchView('ask')">答疑</a>
+    </nav>
+    <span class="spacer"></span>
+    <label class="source-switch" v-if="!prodMode">数据源
+      <select id="source-select" v-model="source" @change="onSourceChange">
+        <option value="mock">Mock（离线）</option>
+        <option value="real">真实后端</option>
+      </select>
+    </label>
+    <button class="btn btn-ghost gear" id="btn-settings" title="设置 / 诊断" @click="openSettings">&#9881;</button>
+  </header>
+
+  <main class="page">
+    <!-- ============ 复盘视图 ============ -->
+    <section id="view-review" v-show="view === 'review'" :class="{ 'sgf-open': !sgfCollapsed }">
+    <!-- ① SGF 输入 -->
+    <section class="panel sgf-panel">
+      <div class="panel-title">① 载入棋谱（SGF）
+        <button class="btn btn-sm" id="btn-sgf-toggle" @click="sgfCollapsed = !sgfCollapsed">
+          {{ sgfCollapsed ? '▸ 展开' : '▾ 收起' }}
+        </button>
+        <span class="muted small" v-if="sgfCollapsed">{{ loadedInfo }}</span>
+      </div>
+      <template v-if="!sgfCollapsed">
+      <textarea id="sgf-input" v-model="sgfText" spellcheck="false"
+        placeholder="在此粘贴 SGF 棋谱（支持 9 / 13 / 19 路，从 SGF 的 SZ 属性读取）……"></textarea>
+      <div class="row sgf-actions">
+        <button class="btn btn-primary" id="btn-load" :disabled="busy" @click="loadSgf()">载入</button>
+        <button class="btn" id="btn-sample" :disabled="busy" @click="loadSample()">载入 9 路示例</button>
+        <span v-if="loadError" class="load-error">{{ loadError }}</span>
+        <span v-else class="muted small">{{ loadedInfo }}</span>
+      </div>
+      </template>
+      <!-- M1 真实复盘：分析进度 / 状态 -->
+      <div class="review-status" v-if="source === 'real'">
+        <div v-if="reviewStatus === 'pending' || reviewStatus === 'analyzing'" class="progress-wrap">
+          <div class="progress-outer">
+            <div class="progress-inner" id="review-progress" :style="{ width: progressPct }"></div>
+          </div>
+          <div class="progress-text" id="review-progress-text">KataGo 分析中：{{ progressPct }}（{{ reviewProfile }} 档）</div>
+        </div>
+        <div v-else-if="reviewStatus === 'done'" class="progress-text" id="review-status-done">
+          分析完成 · {{ curveData.length }} 手真实数据 · profile={{ reviewDetail ? reviewDetail.profile : 'fast' }}
+        </div>
+        <div v-else-if="reviewStatus === 'failed'" class="load-error" id="review-status-failed">复盘分析失败：{{ reviewError }}</div>
+      </div>
+    </section>
+
+    <!-- 主体：左棋盘 + 右分析 -->
+    <section class="grid-main">
+      <div class="col-board">
+        <div class="panel">
+          <div class="panel-title">② 棋盘
+            <span class="muted small" id="board-size-label">{{ boardLabel }}</span>
+          </div>
+          <div class="board-frame" id="review-board-frame">
+            <canvas id="review-heat-canvas" class="heat-canvas" v-show="showHeat"></canvas>
+            <div id="board-host"></div>
+          </div>
+          <div class="player-bar">
+            <span id="move-indicator">第 {{ currentMove }} / {{ totalMoves }} 手</span>
+            <span class="turn-dot" :class="turn === 'W' ? 'turn-w' : 'turn-b'" :title="'轮到' + (turn === 'W' ? '白' : '黑') + '方'"></span>
+          </div>
+          <!-- ④ 播放控制（全部由 WGo.KifuReader 驱动） -->
+          <div class="controls">
+            <button class="btn" id="btn-first" title="回到开始" :disabled="trialMode" @click="goFirst">&#9198;</button>
+            <button class="btn" id="btn-prev" title="上一步" :disabled="trialMode" @click="goPrev">&#9194;</button>
+            <button class="btn btn-primary" id="btn-play" title="播放 / 暂停" :disabled="trialMode" @click="togglePlay">
+              {{ playing ? '&#9208;' : '&#9654;' }}
+            </button>
+            <button class="btn" id="btn-next" title="下一步" :disabled="trialMode" @click="goNext">&#9193;</button>
+            <button class="btn" id="btn-last" title="到结尾" :disabled="trialMode" @click="goLast">&#9197;</button>
+            <button class="btn" id="btn-trial" :class="{ active: trialMode }" @click="toggleTrial">
+              {{ trialMode ? '退出试摆' : '试摆' }}
+            </button>
+            <button class="btn" id="btn-trial-undo" v-if="trialMode" @click="undoTrialStone">撤销试摆子</button>
+            <button class="btn" id="btn-heat" :class="{ active: showHeat }" @click="toggleHeat">目数</button>
+            <button class="btn btn-primary" id="btn-deep" :disabled="deepLoading || !reviewId" @click="requestDeep">深度分析</button>
+          </div>
+          <!-- 手数定位滑块 -->
+          <div class="slider-row">
+            <input type="range" id="move-slider" min="0" :max="totalMoves"
+              v-model.number="sliderValue" @input="onSlider">
+            <span class="muted small" style="min-width:64px;text-align:right">{{ currentMove }} / {{ totalMoves }}</span>
+          </div>
+          <!-- 手数列表（点击定位） -->
+          <div class="move-strip" id="move-strip">
+            <button v-for="m in moveNumbers" :key="m" class="move-btn"
+              :class="{ active: currentMove === m, black: moveColors[m - 1] === 'B' }"
+              :data-move="m" @click="goToMove(m)">{{ m }}</button>
+          </div>
+          <div class="goc-empty" v-if="!totalMoves">棋谱中还没有落子</div>
+        </div>
+      </div>
+
+      <div class="col-side">
+        <!-- ③ 胜率曲线（canvas 自绘曲线，数据来自 mock；非棋盘，允许自绘） -->
+        <section class="panel">
+          <div class="panel-title">③ 胜率曲线 <span class="muted small">{{ curveSourceLabel }}</span></div>
+          <div class="curve-box">
+            <canvas id="curve-canvas" class="curve-canvas"></canvas>
+            <div class="curve-legend">
+              <span><i class="legend-dot" style="background:#2b6cb0"></i>黑方视角胜率（3 手平滑）</span>
+              <span><i class="legend-dot" style="background:#c53030"></i>坏手</span>
+              <span><i class="legend-dot" style="background:#d69e2e"></i>疑问手</span>
+              <span><i class="legend-dot" style="background:#2f855a"></i>好手</span>
+            </div>
+          </div>
+          <div class="curve-box" style="margin-top:.4rem">
+            <canvas id="complexity-canvas" class="curve-canvas" style="height:80px"></canvas>
+            <div class="curve-legend">
+              <span><i class="legend-dot" style="background:#805ad5"></i>复杂度（目差不确定度）</span>
+            </div>
+          </div>
+          <div class="curve-box" style="margin-top:.4rem">
+            <canvas id="score-curve-canvas" class="curve-canvas" style="height:80px"></canvas>
+            <div class="curve-legend">
+              <span><i class="legend-dot" style="background:#dd6b20"></i>目差（黑方视角，正=黑好）</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 关键手（颜色标记，随播放联动高亮） -->
+        <section class="panel">
+          <div class="panel-title">④ 关键手
+            <span class="stats-row small">
+              <span class="stat-chip">坏手 <b>{{ keyStats.blunders }}</b></span>
+              <span class="stat-chip">疑问 <b>{{ keyStats.questions }}</b></span>
+              <span class="stat-chip">好手 <b>{{ keyStats.good }}</b></span>
+            </span>
+          </div>
+          <div class="keymove-list">
+            <div v-for="m in keyMoves" :key="m.move" class="keymove-item"
+              :class="{ active: currentMove === m.move }" :data-keymove="m.move"
+              @click="onKeyMoveClick(m)">
+              <span class="keymove-num">第 {{ m.move }} 手</span>
+              <span class="keymove-cat" :class="m.category">{{ catName(m.category) }}</span>
+              <span class="keymove-info">{{ m.coord }} · 推荐 {{ m.best_coord || '—' }}</span>
+            </div>
+            <div v-if="!keyMoves.length" class="goc-empty">
+              {{ source === 'real'
+                ? '分析完成后此处显示关键手（坏手 / 疑问手 / 好手）'
+                : '该棋谱无 mock 关键手数据（仅内置 9 路示例提供）' }}
+            </div>
+          </div>
+        </section>
+
+        <!-- ⑤ 讲解面板（M1：点关键手即出现；AI 讲解单次调用、失败降级） -->
+        <section class="panel" v-if="explainOpen" id="explain-panel">
+          <div class="panel-title">⑤ 讲解
+            <span class="muted small" v-if="explainMove">
+              第 {{ explainMove.move }} 手 · {{ explainMove.color === 'B' ? '黑' : '白' }} {{ explainMove.coord }}
+              <span v-if="explainMove.category && explainMove.category !== 'normal'" class="keymove-cat" :class="explainMove.category">{{ catName(explainMove.category) }}</span>
+            </span>
+          </div>
+          <div class="explain-meta" v-if="explainMove">
+            <div class="explain-meta-row" v-if="explainMove.winrate !== null && explainMove.winrate !== undefined">
+              <span class="muted small">落子后胜率</span><b>{{ (explainMove.winrate * 100).toFixed(1) }}%</b>
+              <span class="muted small" v-if="explainMove.delta !== null && explainMove.delta !== undefined">Δ {{ (explainMove.delta * 100).toFixed(1) }}p</span>
+              <span class="muted small" v-if="explainMove.visits">计算量 {{ explainMove.visits }}</span>
+            </div>
+            <div class="explain-meta-row" v-if="explainMove.best_coord">
+              <span class="muted small">一选</span><b>{{ explainMove.best_coord }}</b>
+            </div>
+            <div class="explain-meta-row" v-if="explainMove.pv && explainMove.pv.length">
+              <span class="muted small">PV</span><code>{{ explainMove.pv.join(' ') }}</code>
+              <button class="btn btn-sm" id="btn-pv-play" @click="playExplainPv">▶ 变化播放</button>
+            <button class="btn btn-sm" id="btn-penalty"
+              v-if="explainMove && (explainMove.category === 'blunder' || explainMove.category === 'question')"
+              :disabled="penaltyLoading" @click="playPenalty">▶ 演示惩罚</button>
+            </div>
+            <div class="explain-section" v-if="explainMove && explainMove.candidates && explainMove.candidates.length">
+              <div class="explain-label">KataGo 选点推荐</div>
+              <div class="cand-list">
+                <div v-for="c in explainMove.candidates" :key="c.order" class="cand-item">
+                  <b>{{ c.order + 1 }}. {{ c.move || '—' }}</b>
+                  <span class="muted small">胜率 {{ c.winrate != null ? (c.winrate * 100).toFixed(1) : '—' }}%</span>
+                  <span class="muted small" v-if="c.visits">计算量 {{ c.visits }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="explainLoading" class="goc-loading" id="explain-loading">正在生成 AI 讲解…（单次调用，失败即降级）</div>
+          <div v-else-if="explainFallback" class="goc-error" id="explain-fallback">{{ explainFallback }}</div>
+          <template v-else-if="explainData">
+            <div class="explain-section">
+              <div class="explain-label">问题</div>
+              <div class="explain-text">{{ explainData.content.problem }}</div>
+            </div>
+            <div class="explain-section" v-if="explainData.content.reason">
+              <div class="explain-label">原因</div>
+              <div class="explain-text">{{ explainData.content.reason }}</div>
+            </div>
+            <div class="explain-section" v-if="explainData.content.recommendation">
+              <div class="explain-label">推荐</div>
+              <div class="explain-text">{{ explainData.content.recommendation }}</div>
+            </div>
+            <div class="explain-section" v-if="explainData.content.necessity">
+              <div class="explain-label">为什么必须下这里</div>
+              <div class="explain-text">{{ explainData.content.necessity }}</div>
+            </div>
+            <div class="explain-section" v-if="explainData.content.variation && explainData.content.variation.length">
+              <div class="explain-label">变化（KataGo PV）</div>
+              <div class="explain-text"><code>{{ explainData.content.variation.join(' ') }}</code></div>
+            </div>
+            <div class="explain-section" v-if="explainData.content.alternatives && explainData.content.alternatives.length">
+              <div class="explain-label">备选下法（舒适区）</div>
+              <div class="explain-text" v-for="(a, i) in explainData.content.alternatives" :key="i">· {{ a }}</div>
+            </div>
+            <div class="takeaway-box" v-if="explainData.content.takeaway">{{ explainData.content.takeaway }}</div>
+            <!-- 同步讲棋：讲解分段与棋盘变化联动 -->
+            <div class="sync-box" v-if="explainData.content.segments && explainData.content.segments.length">
+              <div class="sync-badges" v-if="explainData.content.result_type || explainData.content.can_tenuki">
+                <span class="sync-badge sync-badge-type" v-if="explainData.content.result_type">结果：{{ explainData.content.result_type }}</span>
+                <span class="sync-badge" v-if="explainData.content.can_tenuki">脱先：{{ explainData.content.can_tenuki }}</span>
+              </div>
+              <div class="row" style="margin:.35rem 0">
+                <button class="btn btn-primary btn-sm" id="btn-sync-explain" @click="syncBegin('review', explainData.content.segments)">▶ 同步讲棋</button>
+                <button class="btn btn-sm" v-if="syncOpen && syncTarget==='review'" @click="syncToggle">{{ syncPlaying ? '⏸ 暂停' : '▶ 继续' }}</button>
+                <button class="btn btn-sm" v-if="syncOpen && syncTarget==='review'" @click="syncStop(false)">■ 结束</button>
+                <button class="btn btn-sm" id="btn-extract-problem" :disabled="extracting" @click="extractProblemToLibrary" title="把本手所在局部截取为题目加入题库">📚 收录本题</button>
+              </div>
+              <div class="sync-segments">
+                <div v-for="(seg, i) in explainData.content.segments" :key="i"
+                     :class="['sync-seg', { active: syncOpen && syncTarget==='review' && syncIdx === i }]"
+                     @click="syncOpen && syncTarget==='review' ? syncJump(i) : syncBegin('review', explainData.content.segments)">
+                  <span class="sync-seg-num">{{ i + 1 }}</span><span class="sync-seg-text">{{ seg.text }}</span>
+                  <span class="sync-seg-steps" v-if="seg.variation && seg.variation.length">{{ seg.variation.length }} 手</span>
+                </div>
+              </div>
+              <div class="muted small" v-if="syncOpen && syncTarget==='review' && syncIdx >= 0" id="sync-now">
+                正在讲第 {{ syncIdx + 1 }} 段<span v-if="syncTotal">（{{ syncStep }}/{{ syncTotal }} 手）</span>
+              </div>
+            </div>
+            <div class="muted small" v-if="explainData.model" style="margin-top:.35rem">模型：{{ explainData.model }}</div>
+          </template>
+          <div class="row" style="margin-top:.5rem">
+            <button class="btn btn-primary" id="btn-explain" :disabled="explainLoading" @click="requestExplain">AI 讲解</button>
+            <button class="btn" v-if="explainData" :disabled="voicePlaying" @click="speakExplain">🔊 听讲解</button>
+            <select id="voice-select" v-model="voicePersona" class="voice-select">
+              <option value="gentle">温柔大姐姐</option>
+              <option value="tsundere">傲娇小萝莉</option>
+              <option value="default">标准女声</option>
+            </select>
+            <button class="btn" @click="explainOpen = false">收起</button>
+          </div>
+        </section>
+
+        <!-- ⑥ 深度分析报告（付费精品：整盘上下文关联） -->
+        <section class="panel" v-if="deepOpen" id="deep-panel">
+          <div class="panel-title">⑥ 深度分析
+            <button class="btn btn-sm" v-if="deepData && !deepLoading" :disabled="voicePlaying" @click="speakDeep">🔊 听报告</button>
+            <button class="btn btn-sm" @click="closeDeep">收起</button>
+          </div>
+          <div v-if="deepLoading" class="goc-loading" id="deep-loading">正在生成整盘深度报告…（内容较长，约需十几秒）</div>
+          <div v-else-if="deepError" class="goc-error" id="deep-fallback">{{ deepError }}</div>
+          <template v-else-if="deepData && deepData.content">
+            <h3 class="deep-title">{{ deepData.content.title }}</h3>
+            <div class="explain-text" v-if="deepData.content.overview">{{ deepData.content.overview }}</div>
+            <div class="explain-section" v-if="deepData.content.stages && deepData.content.stages.length">
+              <div class="explain-label">分段评述</div>
+              <div class="explain-text" v-for="(st, i) in deepData.content.stages" :key="i">{{ st }}</div>
+            </div>
+            <div class="explain-section" v-if="deepData.content.key_moves && deepData.content.key_moves.length">
+              <div class="explain-label">关键手串讲</div>
+              <div class="explain-text" v-for="(km, i) in deepData.content.key_moves" :key="i">
+                <b>第 {{ km.move }} 手：</b>{{ km.analysis }}
+              </div>
+            </div>
+            <div class="explain-section" v-if="deepData.content.causality">
+              <div class="explain-label">失误因果链</div>
+              <div class="explain-text">{{ deepData.content.causality }}</div>
+            </div>
+            <div class="explain-section" v-if="deepData.content.strengths && deepData.content.strengths.length">
+              <div class="explain-label">亮点</div>
+              <div class="explain-text" v-for="(x, i) in deepData.content.strengths" :key="i">· {{ x }}</div>
+            </div>
+            <div class="explain-section" v-if="deepData.content.weaknesses && deepData.content.weaknesses.length">
+              <div class="explain-label">短板</div>
+              <div class="explain-text" v-for="(x, i) in deepData.content.weaknesses" :key="i">· {{ x }}</div>
+            </div>
+            <div class="explain-section" v-if="deepData.content.homework && deepData.content.homework.length">
+              <div class="explain-label">训练建议</div>
+              <div class="explain-text" v-for="(x, i) in deepData.content.homework" :key="i">· {{ x }}</div>
+            </div>
+            <div class="muted small" v-if="deepData.model" style="margin-top:.35rem">模型：{{ deepData.model }}</div>
+          </template>
+        </section>
+      </div>
+    </section>
+    </section><!-- /#view-review -->
+
+    <!-- ============ 练习视图（试下） ============ -->
+    <section id="view-practice" v-show="view === 'practice'">
+      <!-- 模式一：题库列表 -->
+      <div v-if="practiceMode === 'list'" class="practice-grid practice-list-only">
+        <div class="col-library">
+          <div class="panel">
+            <div class="panel-title">题库
+              <select id="theme-select" v-model="practiceTheme" @change="onThemeChange">
+                <option value="">全部主题</option>
+                <option value="life_death">死活</option>
+                <option value="capturing_race">对杀</option>
+                <option value="endgame">官子</option>
+                <option value="middle">中盘</option>
+              </select>
+              <select id="sort-select" v-model="practiceSort" @change="onSortChange">
+                <option value="easiest">从易到难</option>
+                <option value="hardest">从难到易</option>
+                <option value="">最新优先</option>
+              </select>
+              <span class="muted small" v-if="practiceList.length">共 {{ practiceTotal }} 题</span>
+            </div>
+            <div class="goc-loading" v-if="practiceLoading" id="practice-loading">题库加载中…</div>
+            <div class="goc-error" v-else-if="practiceError" id="practice-error">
+              {{ practiceError }}
+              <div style="margin-top:.3rem"><button class="btn btn-sm" @click="loadLibrary">重试</button></div>
+            </div>
+            <div class="problem-list" v-else-if="practiceList.length">
+              <div v-for="(p, i) in practiceList" :key="p.id" class="problem-item"
+                :class="{ active: practiceProblem && practiceProblem.id === p.id }"
+                :data-problem-id="p.id" @click="selectProblem(p, i)">
+                <div>
+                  <span class="theme-tag">{{ themeName(p.theme) }}</span>
+                  <span class="problem-rank muted small">{{ rankLabel(p.rank_min, p.rank_max) }}</span>
+                </div>
+                <div class="problem-hint muted small">{{ p.hint || '（无提示）' }}</div>
+              </div>
+            </div>
+            <div class="goc-empty" v-else id="practice-empty-list">题库为空（可先在复盘页生成错题）</div>
+            <div class="pager" v-if="practiceTotal > 50">
+              <button class="btn btn-sm" :disabled="practicePage <= 0"
+                @click="gotoPracticePage(practicePage - 1)">‹ 上一页</button>
+              <span class="muted small">第 {{ practicePage + 1 }} / {{ practiceTotalPages }} 页</span>
+              <button class="btn btn-sm" :disabled="practicePage + 1 >= practiceTotalPages"
+                @click="gotoPracticePage(practicePage + 1)">下一页 ›</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 模式二：做题子页面 -->
+      <div v-else class="solve-page">
+        <div class="panel">
+          <div class="panel-title">试下
+            <button class="btn btn-sm" id="btn-practice-back" @click="backToPracticeList">← 返回题库</button>
+            <span class="muted small" v-if="practiceProblem">
+              {{ themeName(practiceProblem.theme) }} · {{ rankLabel(practiceProblem.rank_min, practiceProblem.rank_max) }}
+            </span>
+            <span class="muted small" v-if="practiceProblem" id="practice-solver">
+              轮到{{ practiceSolver === 'W' ? '白' : '黑' }}方
+            </span>
+            <span class="badge badge-ok" v-if="attemptResult && attemptResult.solved" id="practice-solved">已答对</span>
+          </div>
+          <div class="goc-loading" v-if="!practiceProblem" id="practice-empty">题目加载中…</div>
+          <div class="practice-goal" v-if="practiceProblem" id="practice-goal">
+            💡 本题目标：{{ practiceGoalText() }}
+          </div>
+          <div class="solve-grid" v-if="practiceProblem">
+            <div class="solve-board">
+              <div class="board-frame">
+                <div id="practice-board-host"></div>
+              </div>
+            </div>
+            <div class="solve-side">
+              <div class="board-tip">点击棋盘交叉点摆子试下（{{ practiceSolver === 'W' ? '白' : '黑' }}先，黑白交替）</div>
+              <div class="row" style="margin-top:.5rem">
+                <button class="btn" id="btn-practice-undo" :disabled="!practiceTrialCount" @click="undoPracticeTrial">撤销</button>
+                <button class="btn" id="btn-practice-reset" :disabled="!practiceTrialCount" @click="resetPracticeTrial">重摆</button>
+                <button class="btn btn-primary" id="btn-practice-judge"
+                  :disabled="attemptLoading || !practiceTrialCount" @click="submitAttempt">判定</button>
+                <button class="btn" id="btn-practice-answer" :disabled="practiceWrongCount < 3" @click="showPracticeAnswer">
+                  显示答案{{ practiceWrongCount < 3 ? '（错 3 次可看）' : '' }}
+                </button>
+                <button class="btn" id="btn-practice-next" v-if="attemptResult && attemptResult.solved" @click="nextProblem">下一题</button>
+              </div>
+              <div class="goc-loading" v-if="attemptLoading" id="attempt-loading">判定中…（错误答案可能需要引擎补查，请稍候）</div>
+              <div class="practice-feedback" v-else-if="attemptResult" id="practice-feedback-box">
+                <div id="practice-feedback" :class="attemptResult.correct ? 'feedback-ok' : 'feedback-no'">
+                  {{ attemptResult.correct ? '✔ 正确' : '✘ 不对' }}
+                </div>
+                <div class="explain-text" id="practice-response">{{ attemptResult.response }}</div>
+                <div v-if="attemptResult.variation && attemptResult.variation.length" class="explain-text">
+                  变化：<code>{{ attemptResult.variation.join(' ') }}</code>
+                  <button class="btn btn-sm" id="btn-pv-practice" @click="playPracticeVariation">▶ 变化播放</button>
+                </div>
+                <div v-if="attemptResult.explanation" class="explain-text muted small" id="practice-explanation">{{ attemptResult.explanation }}</div>
+              </div>
+              <!-- 深度讲解（同步讲棋）：答对后自动生成并播放 -->
+              <div class="goc-loading" v-if="practiceExplainLoading" id="practice-explain-loading">正在生成深度讲解…（局部死活推演中，约 10~20 秒）</div>
+              <div class="goc-error" v-else-if="practiceExplainError" id="practice-explain-error">{{ practiceExplainError }}</div>
+              <div class="sync-box" v-else-if="practiceExplain && practiceExplain.content && practiceExplain.content.segments && practiceExplain.content.segments.length">
+                <div class="sync-badges">
+                  <span class="sync-badge sync-badge-type" v-if="practiceExplain.content.result_type">结果：{{ practiceExplain.content.result_type }}</span>
+                  <span class="sync-badge" v-if="practiceExplain.content.can_tenuki">脱先：{{ practiceExplain.content.can_tenuki }}</span>
+                </div>
+                <div class="row" style="margin:.35rem 0">
+                  <button class="btn btn-primary btn-sm" id="btn-sync-practice" @click="syncBegin('practice', practiceExplain.content.segments)">▶ 同步讲棋</button>
+                  <button class="btn btn-sm" v-if="syncOpen && syncTarget==='practice'" @click="syncToggle">{{ syncPlaying ? '⏸ 暂停' : '▶ 继续' }}</button>
+                  <button class="btn btn-sm" v-if="syncOpen && syncTarget==='practice'" @click="syncStop(false)">■ 结束</button>
+                </div>
+                <div class="sync-segments">
+                  <div v-for="(seg, i) in practiceExplain.content.segments" :key="i"
+                       :class="['sync-seg', { active: syncOpen && syncTarget==='practice' && syncIdx === i }]"
+                       @click="syncOpen && syncTarget==='practice' ? syncJump(i) : syncBegin('practice', practiceExplain.content.segments)">
+                    <span class="sync-seg-num">{{ i + 1 }}</span><span class="sync-seg-text">{{ seg.text }}</span>
+                    <span class="sync-seg-steps" v-if="seg.variation && seg.variation.length">{{ seg.variation.length }} 手</span>
+                  </div>
+                </div>
+                <div class="takeaway-box" v-if="practiceExplain.content.takeaway">{{ practiceExplain.content.takeaway }}</div>
+              </div>
+              <div class="muted small" v-if="practiceProblem.hint" style="margin-top:.4rem">提示：{{ practiceProblem.hint }}</div>
+              <div class="muted small" v-if="practiceShownAnswer" id="practice-answer-text">正解：{{ practiceProblem.answer }}（棋盘上已用圆圈标出）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 答疑视图 ============ -->
+    <section id="view-ask" v-show="view === 'ask'">
+      <div class="panel">
+        <div class="panel-title">答疑 <span class="muted small">有问题随时问 AI 教练</span></div>
+        <div class="ask-presets">
+          <span class="muted small">常见棋理问题，点一下直接问：</span>
+          <button v-for="q in askPresets" :key="q" type="button" class="preset-chip"
+            @click="askPreset(q)">{{ q }}</button>
+        </div>
+        <label class="fld">
+          <span>问题</span>
+          <textarea id="ask-question" v-model="askQuestion" placeholder="例：这一步为什么不好？接下来应该往哪里下？"></textarea>
+        </label>
+        <label class="fld" style="margin-top:.6rem">
+          <span>当前棋谱（可选，自动预填复盘页已载入的 SGF）</span>
+          <textarea id="ask-sgf" v-model="askSgf" spellcheck="false" placeholder="（留空则为纯文字问答）"></textarea>
+        </label>
+        <div class="row" style="margin-top:.6rem">
+          <label class="fld">
+            <span>我的级位</span>
+            <select id="ask-level" v-model="askLevel">
+              <option v-for="o in levelOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" id="btn-ask-submit"
+            :disabled="askLoading || !askQuestion.trim()" @click="submitAsk">提交问题</button>
+          <span class="muted small">单次调用，失败即降级，不重试</span>
+        </div>
+        <div class="goc-loading" v-if="askLoading" id="ask-loading">AI 教练思考中…</div>
+        <div class="goc-error" v-else-if="askError" id="ask-fallback">
+          {{ askError }}
+          <div class="muted small">真实后端需要配置 DeepSeek key；切换到 Mock 数据源可体验本地演示回答。</div>
+        </div>
+        <div class="ask-answer" v-else-if="askResult">
+          <div class="explain-section">
+            <div class="explain-label">结论</div>
+            <div class="explain-text" id="ask-conclusion">{{ askResult.answer.conclusion }}</div>
+          </div>
+          <div class="explain-section">
+            <div class="explain-label">分析</div>
+            <div class="explain-text" id="ask-reasoning">{{ askResult.answer.reasoning }}</div>
+          </div>
+          <div class="explain-section" v-if="askResult.answer.variation && askResult.answer.variation.length">
+            <div class="explain-label">变化</div>
+            <div class="explain-text"><code>{{ askResult.answer.variation.join(' ') }}</code></div>
+          </div>
+          <div class="muted small" v-if="askResult.answer.kata_winrate !== null && askResult.answer.kata_winrate !== undefined">
+            KataGo 验证胜率：{{ (askResult.answer.kata_winrate * 100).toFixed(1) }}%
+          </div>
+          <div class="muted small" v-if="askResult.model">模型：{{ askResult.model }}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 记谱视图（棋盘对弈记录 + 胜率 + 试下研究） ============ -->
+    <section id="view-note" v-show="view === 'note'" class="grid-main">
+      <div class="col-board">
+        <div class="panel">
+          <div class="panel-title">对局记录
+            <span class="muted small" id="note-size-label">{{ noteBoardLabel }}</span>
+            <span class="muted small" v-if="noteTrialMode" style="color:#d69e2e">（试下研究模式）</span>
+          </div>
+          <div class="board-frame" id="note-board-frame">
+            <canvas id="note-heat-canvas" class="heat-canvas"></canvas>
+            <div id="note-board-host"></div>
+          </div>
+          <div class="player-bar">
+            <span id="note-move-indicator">第 {{ noteViewPos }} / {{ noteCount }} 手</span>
+            <span class="turn-dot" :class="noteTurn === 'W' ? 'turn-w' : 'turn-b'"
+              :title="'轮到' + (noteTurn === 'W' ? '白' : '黑') + '方'"></span>
+            <span class="muted small" id="note-winrate-text">{{ noteWinrateText }}</span>
+          </div>
+          <div class="controls">
+            <button class="btn" title="回到开始" :disabled="noteTrialMode" @click="noteGoTo(0)">&#9198;</button>
+            <button class="btn" title="上一步" :disabled="noteTrialMode" @click="noteGoTo(noteViewPos - 1)">&#9194;</button>
+            <button class="btn" title="下一步" :disabled="noteTrialMode" @click="noteGoTo(noteViewPos + 1)">&#9193;</button>
+            <button class="btn" title="到结尾" :disabled="noteTrialMode" @click="noteGoTo(noteCount)">&#9197;</button>
+            <button class="btn" title="悔棋（删除最后一手）" :disabled="noteTrialMode || !noteCount" @click="noteUndo">悔棋</button>
+            <button class="btn" id="btn-note-trial" :class="{ active: noteTrialMode }" @click="noteToggleTrial">
+              {{ noteTrialMode ? '退出试下' : '试下' }}
+            </button>
+            <button class="btn" id="btn-note-trial-undo" v-if="noteTrialMode" @click="noteTrialUndo">撤销试下子</button>
+          </div>
+          <div class="row" style="margin-top:.5rem">
+            <button class="btn btn-primary" id="btn-note-new" @click="noteNewGame">新对局</button>
+            <label class="muted small">棋盘
+              <select id="note-size-select" v-model.number="noteBoardSize" @change="noteNewGame">
+                <option :value="19">19 路（标准）</option>
+                <option :value="13">13 路</option>
+                <option :value="9">9 路</option>
+              </select>
+            </label>
+            <button class="btn" id="btn-note-save" :disabled="!noteCount" @click="noteSaveSgf">保存棋谱（SGF）</button>
+            <button class="btn" id="btn-note-copy" :disabled="!noteCount" @click="noteCopySgf">复制 SGF</button>
+            <span class="muted small" id="note-tip">{{ noteTip }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-side">
+        <!-- ① 胜率曲线（数据来自同一 KataGo 复盘接口，复盘功能不动） -->
+        <section class="panel">
+          <div class="panel-title">胜率曲线 <span class="muted small" id="note-curve-label">{{ noteCurveLabel }}</span></div>
+          <div class="curve-box">
+            <canvas id="note-curve-canvas" class="curve-canvas"></canvas>
+          </div>
+          <div class="row" style="margin-top:.4rem">
+            <button class="btn" id="btn-note-analyze" :disabled="noteAnalyzing" @click="noteAnalyze">分析当前局面</button>
+            <span class="muted small" v-if="noteAnalyzing" id="note-analyzing">KataGo 分析中…</span>
+          </div>
+          <div class="explain-section" v-if="noteCandidates.length">
+            <div class="explain-label">KataGo 选点推荐（当前局面）</div>
+            <div class="cand-list">
+              <div v-for="c in noteCandidates" :key="c.order" class="cand-item">
+                <b>{{ c.order + 1 }}. {{ c.move || '—' }}</b>
+                <span class="muted small">胜率 {{ c.winrate != null ? (c.winrate * 100).toFixed(1) : '—' }}%</span>
+                <span class="muted small" v-if="c.visits">计算量 {{ c.visits }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- ② 棋谱管理 -->
+        <section class="panel">
+          <div class="panel-title">棋谱 <span class="muted small">粘贴 SGF 继续记录，或下载保存</span></div>
+          <textarea id="note-sgf-input" v-model="noteSgfInput" spellcheck="false" rows="3"
+            placeholder="粘贴 SGF 棋谱可载入继续记录（支持 9 / 13 / 19 路，从 SZ 属性读取）……"></textarea>
+          <div class="row" style="margin-top:.4rem">
+            <button class="btn" id="btn-note-load" :disabled="!noteSgfInput.trim()" @click="noteLoadSgf">载入继续记录</button>
+          </div>
+          <div class="move-strip" id="note-move-strip" v-if="noteCount">
+            <button v-for="m in noteMoveNumbers" :key="m" class="move-btn"
+              :class="{ active: noteViewPos === m, black: noteMoveColors[m - 1] === 'B' }"
+              :data-move="m" @click="noteGoTo(m)">{{ m }}</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============ 对弈视图（新手板块：与 AI 对弈 + 下错实时提示） ============ -->
+    <section id="view-play" v-show="view === 'play'" class="grid-main">
+      <div class="col-board">
+        <div class="panel">
+          <div class="panel-title">新手对弈 · AI 陪练
+            <span class="muted small" id="play-size-label">{{ playBoardLabel }}</span>
+            <span class="muted small" v-if="playAiThinking">（AI 思考中…）</span>
+          </div>
+          <div class="board-frame">
+            <div id="play-board-host"></div>
+          </div>
+          <div class="player-bar">
+            <span id="play-move-indicator">第 {{ playMoveCount }} 手</span>
+            <span class="turn-dot" :class="playTurn === 'W' ? 'turn-w' : 'turn-b'"
+              :title="'轮到' + (playTurn === 'W' ? '白' : '黑') + '方'"></span>
+            <span class="muted small" id="play-winrate-text">{{ playUserWinrateText }}</span>
+          </div>
+          <div class="controls">
+            <button class="btn btn-primary" id="btn-play-new" @click="playNewGame">新对局</button>
+            <button class="btn" id="btn-play-undo" :disabled="playMoveCount < 1" @click="playUndo">悔棋（重下）</button>
+            <label class="muted small">棋盘
+              <select id="play-size-select" v-model.number="playBoardSize" @change="playNewGame">
+                <option :value="9">9 路（新手推荐）</option>
+                <option :value="13">13 路</option>
+                <option :value="19">19 路</option>
+              </select>
+            </label>
+            <label class="muted small">AI 棋力
+              <select id="play-rank-select" v-model="playAiRank">
+                <option v-for="o in playAiRankOptions" :key="o.v" :value="o.v">{{ o.label }}</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="col-side">
+        <div class="panel">
+          <div class="panel-title">实时指导</div>
+          <div class="muted small" id="play-status-text" style="margin-bottom:.5rem">{{ playStatusText }}</div>
+          <div v-if="playHint" class="hint-card" :class="playHint.level">
+            <div class="hint-title">第 {{ playHint.move }} 手 · {{ playHint.title }}（{{ playHint.coord }}）</div>
+            <div class="hint-body">{{ playHint.text }}</div>
+            <div class="row" style="margin-top:.5rem">
+              <button class="btn btn-sm btn-primary" id="btn-play-tip"
+                :disabled="playTipLoading" @click="playTipExplain">
+                {{ playTipLoading ? '老师讲解中…' : '听老师讲为什么' }}
+              </button>
+            </div>
+            <div class="tip-text" v-if="playTipText" style="white-space:pre-line">{{ playTipText }}</div>
+          </div>
+          <div v-else class="muted small">
+            大胆下棋：下对了不打扰你；下错了会立刻告诉你常规下法、错在哪里。
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 设置 / 诊断面板（M1：接真实 T0 端点） -->
+  <div class="goc-modal-overlay" v-if="settingsOpen" @click.self="settingsOpen = false">
+    <div class="goc-modal">
+      <div class="goc-modal-head">
+        <h3>&#9881; 设置 / 诊断</h3>
+        <button class="goc-modal-close" @click="settingsOpen = false">&#10005;</button>
+      </div>
+      <div class="goc-modal-body">
+        <div class="goc-loading" v-if="sysLoading">正在读取系统信息…</div>
+        <template v-else>
+          <div class="sys-row"><span>版本号</span><b id="sys-version">{{ sysInfo.version }}</b></div>
+          <div class="sys-row"><span>schema 版本</span><b id="sys-schema">{{ sysInfo.schema }}</b></div>
+          <div class="sys-row"><span>复盘档位</span>
+            <select id="sel-profile" v-model="sysInfo.profile" @change="changeProfile">
+              <option value="fast">fast（快速 · 9 路约 10~20 秒）</option>
+              <option value="standard">standard（标准 · 9 路约 1~2 分钟）</option>
+              <option value="fine">fine（精细 · 9 路约 3~5 分钟）</option>
+            </select>
+          </div>
+          <div class="sys-row"><span>当前档位</span>
+            <span class="badge" :class="sysInfo.profile === 'fine' ? 'badge-no' : 'badge-ok'" id="cur-profile">{{ sysInfo.profile }}</span>
+          </div>
+          <div class="sys-row"><span>引擎后端</span>
+            <select id="sel-backend" v-model="sysInfo.backend" @change="changeBackend">
+              <option value="auto">auto（自动探测）</option>
+              <option value="opencl">opencl（GPU）</option>
+              <option value="cpu">cpu（Eigen/AVX2）</option>
+            </select>
+          </div>
+          <div class="sys-row"><span>引擎就绪</span><b>{{ sysInfo.engineReady ? '是' : '否（按需启动）' }}</b></div>
+          <div class="sys-row"><span>模型就绪</span><b>{{ sysInfo.modelReady ? '是' : '否' }}</b></div>
+          <div class="sys-row"><span>健康检查</span>
+            <span class="badge" :class="sysInfo.healthStatus === 'ok' ? 'badge-ok' : 'badge-no'" id="health-status">
+              {{ sysInfo.healthStatus || '未知' }}
+            </span>
+          </div>
+          <div class="muted small" v-if="sysInfo.healthNote" style="margin-bottom:.4rem">{{ sysInfo.healthNote }}</div>
+          <div class="sys-row"><span>缓存</span>
+            <span class="row" style="gap:.35rem">
+              <button class="btn btn-sm" id="btn-cache-coach" @click="clearCache('coach')">清讲解缓存</button>
+              <button class="btn btn-sm" id="btn-cache-review" @click="clearCache('review')">清复盘缓存</button>
+              <button class="btn btn-sm" id="btn-cache-all" @click="clearCache('all')">全部清除</button>
+            </span>
+          </div>
+          <div class="muted small" style="margin-top:.6rem">
+            {{ source === 'real' ? '数据来自真实后端 /api/v1/system/*（getSystemInfo / getHealth / getVersion）。' : 'Mock 数据源：以上为本地占位数据。' }}
+            引擎后端切换为进程内临时生效（不写配置）；清复盘缓存后同谱重载会重新分析。
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 消息 -->
+  <div id="goc-toasts">
+    <div v-for="t in toasts" :key="t.id" class="goc-toast"
+      :class="t.type === 'error' ? 'goc-toast-error' : t.type === 'success' ? 'goc-toast-success' : ''">
+      {{ t.msg }}
+    </div>
+  </div>
+</div>
+
+<!-- WGo.js 核心 + Kifu + SGF 解析（铁律：棋盘/落子/提子/变化播放全部用 WGo.js，禁止自研） -->
+<script src="assets/wgo/wgo.js?v=232"></script>
+<script src="assets/wgo/kifu.js?v=231"></script>
+<script src="assets/wgo/sgfparser.js?v=231"></script>
+<!-- 页面脚本（ESM，内部引入本地 Vue ESM 构建） -->
+<script type="module" src="js/app.js?v=20260910d"></script>
+</body>
+</html>
+
