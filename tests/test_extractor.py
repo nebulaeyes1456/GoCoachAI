@@ -340,30 +340,49 @@ class TestExtractEndToEnd(unittest.TestCase):
         sgf_text = FIXTURE.read_text(encoding="utf-8")
         # 清空题库：extract 幂等（INSERT OR IGNORE），库中已有同题时
         # extracted 不计入，先清库保证本次断言"新入库 ≥1"可复现。
+        # 注意：本测试跑在开发库上——先备份 problems 表、结束后恢复，
+        # 避免清空真实题库；attempts 需先清（problem_id 外键引用 problems）。
         conn = db_mod.connect()
         try:
+            conn.execute("DELETE FROM attempts")
+            conn.execute("DELETE FROM explanations")
+            conn.execute("DROP TABLE IF EXISTS _problems_bak")
+            conn.execute("CREATE TABLE _problems_bak AS SELECT * FROM problems")
             conn.execute("DELETE FROM problems")
             conn.commit()
         finally:
             conn.close()
-        t0 = time.time()
-        result = extractor.extract(
-            sgf_text=sgf_text, max_problems=1, target_rank=-5,
-            review_profile="standard")
-        elapsed = time.time() - t0
-        print(
-            f"\n[bench] 9 路 e2e: 提取 {len(result['extracted'])} 题, "
-            f"失败 {result['failed']}, 跳过 {result['skipped']}, "
-            f"耗时 {elapsed:.1f}s"
-        )
-        self.assertGreaterEqual(len(result["extracted"]), 1)
-        self.assertLessEqual(elapsed, 300.0)
-        for brief in result["extracted"]:
-            p = store.get_problem(brief["id"])
-            self.assertIsNotNone(p)
-            self.assertEqual(p["source"], "generated")
-            branches = json.loads(p["branches"])
-            self.assertGreater(branches["answer"]["winrate"], 0.95)
+        try:
+            t0 = time.time()
+            result = extractor.extract(
+                sgf_text=sgf_text, max_problems=1, target_rank=-5,
+                review_profile="standard")
+            elapsed = time.time() - t0
+            print(
+                f"\n[bench] 9 路 e2e: 提取 {len(result['extracted'])} 题, "
+                f"失败 {result['failed']}, 跳过 {result['skipped']}, "
+                f"耗时 {elapsed:.1f}s"
+            )
+            self.assertGreaterEqual(len(result["extracted"]), 1)
+            self.assertLessEqual(elapsed, 300.0)
+            for brief in result["extracted"]:
+                p = store.get_problem(brief["id"])
+                self.assertIsNotNone(p)
+                self.assertEqual(p["source"], "generated")
+                branches = json.loads(p["branches"])
+                self.assertGreater(branches["answer"]["winrate"], 0.95)
+        finally:
+            # 恢复开发库题库（新提取的题保留或丢弃均可；保留备份原题）
+            conn = db_mod.connect()
+            try:
+                conn.execute("DELETE FROM problems")
+                conn.execute(
+                    "INSERT INTO problems SELECT * FROM _problems_bak"
+                )
+                conn.execute("DROP TABLE IF EXISTS _problems_bak")
+                conn.commit()
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":
