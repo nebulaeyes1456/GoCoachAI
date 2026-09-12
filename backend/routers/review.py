@@ -13,6 +13,7 @@ import base64
 import binascii
 import json
 import threading
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -127,7 +128,7 @@ def status(review_id: str) -> ReviewStatusResponse:
 
 
 @router.get("/{review_id}", response_model=ReviewDetailResponse)
-def detail(review_id: str) -> ReviewDetailResponse:
+def detail(review_id: str, include_sgf: bool = False) -> ReviewDetailResponse:
     conn = db.connect()
     try:
         row = conn.execute(
@@ -200,6 +201,15 @@ def detail(review_id: str) -> ReviewDetailResponse:
         except json.JSONDecodeError:
             final_ownership = []
 
+    sgf_text: Optional[str] = None
+    if include_sgf and row["sgf_path"]:
+        try:
+            p = Path(row["sgf_path"])
+            if p.exists():
+                sgf_text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            sgf_text = None
+
     return ReviewDetailResponse(
         id=row["id"],
         board_size=int(row["board_size"] or 19),
@@ -211,6 +221,7 @@ def detail(review_id: str) -> ReviewDetailResponse:
         key_moves=key_moves,
         stats=stats,
         final_ownership=final_ownership,
+        sgf_text=sgf_text,
     )
 
 

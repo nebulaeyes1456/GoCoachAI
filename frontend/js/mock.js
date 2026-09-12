@@ -204,6 +204,42 @@ const mockSettings = {
 };
 
 // ---------------------------------------------------------------------------
+// 成长视图 mock 状态与画像特征
+// ---------------------------------------------------------------------------
+
+const mockProgress = {
+  profiles: [
+    { id: 'ppdemo0001', name: '小明', note: '九路练习档案',
+      created_at: '2026-09-01T08:00:00', games_count: 2 },
+  ],
+  games: {
+    ppdemo0001: [
+      { review_id: 'rvmockg1', created_at: '2026-09-03T20:12:00',
+        board_size: 9, profile: 'fast', moves_count: 34,
+        blunders: 1, questions: 3, good: 2, black: '你', white: '对手' },
+      { review_id: 'rvmockg2', created_at: '2026-09-05T19:40:00',
+        board_size: 9, profile: 'standard', moves_count: 42,
+        blunders: 2, questions: 4, good: 3, black: '对手', white: '你' },
+    ],
+  },
+  insight: {},
+};
+
+const mockFeatures = {
+  n_games: 2,
+  avg_loss_per_move: 0.052,
+  blunders: 3, questions: 7, good_moves: 5,
+  direction_errors: 1, complexity_errors: 2, reading_errors: 1,
+  weakest: '官子', weakest_loss: 0.063,
+  phases: {
+    layout: { n: 42, avg_loss: 0.038, worst_move: 11 },
+    middle: { n: 55, avg_loss: 0.047, worst_move: 47 },
+    endgame: { n: 20, avg_loss: 0.063, worst_move: 77 },
+  },
+  trend: 'flat',
+};
+
+// ---------------------------------------------------------------------------
 // Mock API（与 api.js 的 real 实现同构）
 // ---------------------------------------------------------------------------
 
@@ -506,6 +542,112 @@ export const mockApi = {
       model: 'mock-llm',
       cost: 0.0021,
     };
+  },
+
+  // ---- 成长视图 mock ----
+  async createProfile(name, note) {
+    await randDelay(300, 600);
+    const p = {
+      id: 'pp' + Math.random().toString(16).slice(2, 10),
+      name, note: note || '',
+      created_at: new Date().toISOString(),
+      games_count: 0,
+    };
+    mockProgress.profiles.push(p);
+    return { profile: p };
+  },
+
+  async listProfiles() {
+    await randDelay(300, 600);
+    return { profiles: mockProgress.profiles.map((p) => ({
+      ...p, games_count: (mockProgress.games[p.id] || []).length,
+    })) };
+  },
+
+  async deleteProfile(profileId) {
+    await randDelay(300, 600);
+    mockProgress.profiles = mockProgress.profiles.filter((x) => x.id !== profileId);
+    return { deleted: true };
+  },
+
+  async profileDetail(profileId) {
+    await randDelay(400, 800);
+    const p = mockProgress.profiles.find((x) => x.id === profileId);
+    if (!p) throw Object.assign(new Error('档案不存在'), { status: 404 });
+    return {
+      profile: p,
+      games: mockProgress.games[profileId] || [],
+      insight: mockProgress.insight[profileId] || null,
+    };
+  },
+
+  async attachReview(profileId, reviewId) {
+    await randDelay(400, 800);
+    const list = mockProgress.games[profileId] || (mockProgress.games[profileId] = []);
+    if (!list.some((g) => g.review_id === reviewId)) {
+      list.push({
+        review_id: reviewId,
+        created_at: new Date().toISOString(),
+        board_size: 9, profile: 'fast',
+        moves_count: 34,
+        blunders: 1, questions: 3, good: 2,
+        black: '你', white: '对手',
+      });
+    }
+    return { attached: true };
+  },
+
+  async importSgf(profileId, sgfText, reviewProfile) {
+    await randDelay(600, 1000);
+    const reviewId = 'rvmock' + Math.random().toString(16).slice(2, 10);
+    const list = mockProgress.games[profileId] || (mockProgress.games[profileId] = []);
+    list.push({
+      review_id: reviewId,
+      created_at: new Date().toISOString(),
+      board_size: 9, profile: reviewProfile || 'fast',
+      moves_count: 40,
+      blunders: 2, questions: 4, good: 3,
+      black: '导入', white: '对手',
+    });
+    return { review_id: reviewId, status: 'pending', profile_id: profileId };
+  },
+
+  async profileInsight(profileId) {
+    await randDelay(700, 1200);
+    mockProgress.insight[profileId] = {
+      games_count: (mockProgress.games[profileId] || []).length,
+      features: mockFeatures,
+      rank_estimate: '约 3 级 ~ 1 级',
+      advice: null,
+      updated_at: new Date().toISOString(),
+    };
+    return { insight: mockProgress.insight[profileId] };
+  },
+
+  async profileAdvice(profileId) {
+    await randDelay(900, 1600);
+    const ins = mockProgress.insight[profileId] || {
+      games_count: (mockProgress.games[profileId] || []).length,
+      features: mockFeatures,
+      rank_estimate: '约 3 级 ~ 1 级',
+      updated_at: new Date().toISOString(),
+    };
+    ins.advice = {
+      summary: '你布局扎实、中盘有一定战斗力，但收官阶段每手损失偏大，是当前最值得改进的环节。',
+      strengths: ['布局阶段选点合理，方向失误少', '中盘攻防敢于出手，好手率不错'],
+      weaknesses: ['收官次序感弱，小官子爱随手', '复杂局面读棋深度不足，会出现简单失误'],
+      plan: [
+        { focus: '收官最大', why: '官子阶段平均每手损失最高（0.063），是拖累胜率的主要来源。',
+          practice: '每天做 2 题收官题，先大后小、先厚后薄。',
+          theme: '收官最大' },
+        { focus: '中盘要点', why: '中盘出现 1 次计算失误，关键处要多算一步。',
+          practice: '每周复盘 1 盘，用「关键手」找出最大损失的那几步。',
+          theme: '中盘要点' },
+      ],
+      homework: ['本周完成 10 道收官题', '复盘 1 盘自己的对局，找出最大的 3 个失误'],
+    };
+    mockProgress.insight[profileId] = ins;
+    return { insight: ins };
   },
 
   async systemInfo() {

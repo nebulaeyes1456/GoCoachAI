@@ -132,6 +132,24 @@ MIGRATIONS: list[tuple[int, str]] = [
     (5, "ALTER TABLE moves ADD COLUMN ownership TEXT;"),
     # v6：题目目标分类（做活/杀棋/对杀/逃棋筋/吃棋筋，规则+AI 兜底）
     (6, "ALTER TABLE problems ADD COLUMN goal TEXT;"),
+    # v7：棋手档案（棋谱库 + 水平画像）
+    (7, "CREATE TABLE IF NOT EXISTS player_profiles ("
+        "id TEXT PRIMARY KEY,"
+        " name TEXT NOT NULL,"
+        " note TEXT NOT NULL DEFAULT '',"
+        " created_at TEXT,"
+        " updated_at TEXT);"),
+    # v8：复盘记录关联档案（NULL=未归档）
+    (8, "ALTER TABLE reviews ADD COLUMN profile_id TEXT;"),
+    # v9：档案画像缓存（features/rank 计算结果 + LLM 建议）
+    (9, "CREATE TABLE IF NOT EXISTS profile_insights ("
+        "profile_id TEXT PRIMARY KEY,"
+        " games_count INTEGER NOT NULL DEFAULT 0,"
+        " features TEXT,"
+        " rank_estimate TEXT,"
+        " advice TEXT,"
+        " advice_model TEXT,"
+        " updated_at TEXT);"),
 ]
 
 

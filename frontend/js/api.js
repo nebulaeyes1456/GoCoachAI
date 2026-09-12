@@ -3,7 +3,7 @@
 // 若页面本身由后端挂在同源（桌面壳/uvicorn 直开），则用相对路径更稳（兼容 localhost 访问）。
 // 数据源开关：Mock（默认）/ 真实，见 initSource/setSource。
 
-import { mockApi, MOCK_SAMPLE_SGF } from './mock.js?v=20260910a';
+import { mockApi, MOCK_SAMPLE_SGF } from './mock.js?v=20260912a';
 
 const ABS_BASE = 'http://127.0.0.1:8765';
 
@@ -65,7 +65,8 @@ const realApi = {
   analyze: (sgfText, profile) =>
     realFetch('POST', '/api/v1/review/analyze', { sgf_text: sgfText, profile }),
   reviewStatus: (id) => realFetch('GET', `/api/v1/review/${id}/status`),
-  reviewDetail: (id) => realFetch('GET', `/api/v1/review/${id}`),
+  reviewDetail: (id, includeSgf) =>
+    realFetch('GET', `/api/v1/review/${id}${includeSgf ? '?include_sgf=true' : ''}`),
   explain: (reviewId, moveNumber) =>
     realFetch('POST', '/api/v1/coach/explain', { review_id: reviewId, move_number: moveNumber }),
   summary: (reviewId) =>
@@ -115,6 +116,25 @@ const realApi = {
   extractProblem: (reviewId, moveNumber) =>
     realFetch('POST', '/api/v1/problems/extract_from_review',
       { review_id: reviewId, move_number: moveNumber }),
+  // ---- 成长视图（棋手档案 / 棋谱库 / 水平画像） ----
+  createProfile: (name, note) =>
+    realFetch('POST', '/api/v1/progress/profiles', { name, note: note || '' }),
+  listProfiles: () => realFetch('GET', '/api/v1/progress/profiles'),
+  deleteProfile: (profileId) =>
+    realFetch('DELETE', `/api/v1/progress/profiles/${profileId}`),
+  profileDetail: (profileId) =>
+    realFetch('GET', `/api/v1/progress/profiles/${profileId}`),
+  attachReview: (profileId, reviewId) =>
+    realFetch('POST', `/api/v1/progress/profiles/${profileId}/attach`,
+      { profile_id: profileId, review_id: reviewId }),
+  importSgf: (profileId, sgfText, reviewProfile) =>
+    realFetch('POST', `/api/v1/progress/profiles/${profileId}/import`,
+      { profile_id: profileId, sgf_text: sgfText,
+        review_profile: reviewProfile || 'fast' }),
+  profileInsight: (profileId) =>
+    realFetch('POST', `/api/v1/progress/profiles/${profileId}/insight`, {}),
+  profileAdvice: (profileId) =>
+    realFetch('POST', `/api/v1/progress/profiles/${profileId}/advice`, {}),
   ask: (sgfText, question, level) =>
     realFetch('POST', '/api/v1/coach/ask', { sgf_text: sgfText, question, level }),
   systemInfo: () => realFetch('GET', '/api/v1/system/info'),
@@ -151,7 +171,7 @@ function dispatch(method, ...args) {
 export const api = {
   analyze: (sgfText, profile) => dispatch('analyze', sgfText, profile),
   reviewStatus: (id) => dispatch('reviewStatus', id),
-  reviewDetail: (id) => dispatch('reviewDetail', id),
+  reviewDetail: (id, includeSgf) => dispatch('reviewDetail', id, includeSgf),
   explain: (reviewId, moveNumber) => dispatch('explain', reviewId, moveNumber),
   summary: (reviewId) => dispatch('summary', reviewId),
   deep: (reviewId) => dispatch('deep', reviewId),
@@ -169,6 +189,16 @@ export const api = {
   problemExplain: (problemId) => dispatch('problemExplain', problemId),
   extractProblem: (reviewId, moveNumber) =>
     dispatch('extractProblem', reviewId, moveNumber),
+  createProfile: (name, note) => dispatch('createProfile', name, note),
+  listProfiles: () => dispatch('listProfiles'),
+  deleteProfile: (profileId) => dispatch('deleteProfile', profileId),
+  profileDetail: (profileId) => dispatch('profileDetail', profileId),
+  attachReview: (profileId, reviewId) =>
+    dispatch('attachReview', profileId, reviewId),
+  importSgf: (profileId, sgfText, reviewProfile) =>
+    dispatch('importSgf', profileId, sgfText, reviewProfile),
+  profileInsight: (profileId) => dispatch('profileInsight', profileId),
+  profileAdvice: (profileId) => dispatch('profileAdvice', profileId),
   ask: (sgfText, question, level) => dispatch('ask', sgfText, question, level),
   systemInfo: () => dispatch('systemInfo'),
   updateSettings: (updates) => dispatch('updateSettings', updates),

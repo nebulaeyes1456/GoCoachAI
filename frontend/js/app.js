@@ -373,6 +373,20 @@ createApp({
       practiceExplainLoading: false,
       practiceExplainError: '',
       extracting: false,      // 收录本题请求中
+      // ---- 成长视图（棋手档案 / 棋谱库 / 水平画像） ----
+      progressProfiles: [],
+      progressProfileId: '',
+      progressDetail: null,    // {profile, games, insight}
+      progressLoading: false,
+      progressInsight: null,   // 画像响应（含 features/rank_estimate）
+      progressInsightLoading: false,
+      progressAdvice: null,
+      progressAdviceLoading: false,
+      progressImportOpen: false,
+      progressImportText: '',
+      progressImporting: false,
+      progressNewName: '',
+      attachProfileId: '',     // 复盘页收藏目标档案
       practiceTotal: 0,
       practiceLoading: false,
       practiceError: '',
@@ -438,7 +452,7 @@ createApp({
 
   computed: {
     viewName() {
-      return { review: '复盘', practice: '练习', note: '记谱', play: '对弈', ask: '答疑' }[this.view] || '复盘';
+      return { review: '复盘', practice: '练习', note: '记谱', play: '对弈', ask: '答疑', progress: '成长' }[this.view] || '复盘';
     },
     noteMoveNumbers() {
       return Array.from({ length: this.noteCount }, (_, i) => i + 1);
@@ -514,10 +528,12 @@ createApp({
 
     // ---------------- M2：三视图切换 ----------------
     switchView(v) {
-      if (['review', 'practice', 'note', 'play', 'ask'].indexOf(v) < 0) v = 'review';
+      if (['review', 'practice', 'note', 'play', 'ask', 'progress'].indexOf(v) < 0) v = 'review';
       this.view = v;
       document.body.dataset.view = v;
-      if (v === 'practice') {
+      if (v === 'progress') {
+        this.loadProfiles();
+      } else if (v === 'practice') {
         // 首次进入练习视图时加载题库
         if (!this.practiceList.length && !this.practiceLoading && !this.practiceError) {
           this.loadLibrary();
@@ -1943,6 +1959,230 @@ createApp({
         this.extracting = false;
       }
     },
+    // ================= 成长视图：棋手档案 / 棋谱库 / 水平画像 =================
+    async loadProfiles() {
+      this.progressLoading = true;
+      try {
+        const r = await api.listProfiles();
+        this.progressProfiles = r.profiles || [];
+        if (this.progressProfileId) {
+          if (!this.progressProfiles.some((x) => x.id === this.progressProfileId)) {
+            this.progressProfileId = '';
+          }
+        }
+        if (!this.progressProfileId && this.progressProfiles.length) {
+          this.progressProfileId = this.progressProfiles[0].id;
+        }
+        if (this.progressProfileId) {
+          await this.selectProgressProfile(this.progressProfileId, true);
+        }
+      } catch (e) {
+        this.toast('档案加载失败：' + ((e && e.message) || e), 'error');
+      } finally {
+        this.progressLoading = false;
+      }
+    },
+    async selectProgressProfile(id, silent) {
+      this.progressProfileId = id;
+      this.progressInsight = null;
+      this.progressAdvice = null;
+      try {
+        this.progressDetail = await api.profileDetail(id);
+        const ins = this.progressDetail && this.progressDetail.insight;
+        if (ins && ins.features) {
+          this.progressInsight = {
+            insight: {
+              features: ins.features,
+              rank_estimate: ins.rank_estimate || '',
+              games_count: ins.games_count || 0,
+              updated_at: ins.updated_at || '',
+              advice: ins.advice || null,
+            },
+          };
+          if (ins.advice) this.progressAdvice = ins.advice;
+          this.$nextTick(() => this.drawPhaseChart());
+        }
+      } catch (e) {
+        if (!silent) this.toast('档案详情加载失败：' + ((e && e.message) || e), 'error');
+      }
+    },
+    async createProfile() {
+      const name = (this.progressNewName || '').trim();
+      if (!name) { this.toast('请填写档案名（如「小明」）', 'error'); return; }
+      try {
+        const r = await api.createProfile(name, '');
+        this.progressNewName = '';
+        this.toast('档案已创建：' + name, 'success');
+        this.progressProfileId = (r.profile && r.profile.id) || '';
+        await this.loadProfiles();
+      } catch (e) {
+        this.toast('创建失败：' + ((e && e.message) || e), 'error');
+      }
+    },
+    async deleteCurrentProfile() {
+      const id = this.progressProfileId;
+      if (!id) return;
+      const p = this.progressProfiles.find((x) => x.id === id);
+      if (!window.confirm('删除档案「' + (p ? p.name : id) + '」？棋谱不会删除，只解除关联。')) return;
+      try {
+        await api.deleteProfile(id);
+        this.progressProfileId = '';
+        this.progressDetail = null;
+        this.progressInsight = null;
+        this.progressAdvice = null;
+        this.toast('档案已删除', 'success');
+        await this.loadProfiles();
+      } catch (e) {
+        this.toast('删除失败：' + ((e && e.message) || e), 'error');
+      }
+    },
+    async refreshInsight() {
+      const id = this.progressProfileId;
+      if (!id || this.progressInsightLoading) return;
+      this.progressInsightLoading = true;
+      try {
+        this.progressInsight = await api.profileInsight(id);
+        this.$nextTick(() => this.drawPhaseChart());
+        this.toast('画像已刷新', 'success');
+      } catch (e) {
+        this.toast('画像生成失败：' + ((e && e.message) || e), 'error');
+      } finally {
+        this.progressInsightLoading = false;
+      }
+    },
+    async generateAdvice() {
+      const id = this.progressProfileId;
+      if (!id || this.progressAdviceLoading) return;
+      this.progressAdviceLoading = true;
+      try {
+        const r = await api.profileAdvice(id);
+        this.progressInsight = r;
+        this.progressAdvice = (r.insight && r.insight.advice) || null;
+        this.$nextTick(() => this.drawPhaseChart());
+        this.toast('提高建议已生成', 'success');
+      } catch (e) {
+        this.toast('建议生成失败：' + ((e && e.message) || e), 'error');
+      } finally {
+        this.progressAdviceLoading = false;
+      }
+    },
+    async importSgfToProfile() {
+      const id = this.progressProfileId;
+      const sgf = (this.progressImportText || '').trim();
+      if (!id) { this.toast('请先选择档案', 'error'); return; }
+      if (!sgf) { this.toast('请粘贴 SGF 棋谱', 'error'); return; }
+      this.progressImporting = true;
+      try {
+        const r = await api.importSgf(id, sgf, 'fast');
+        this.toast('棋谱已导入，正在后台分析…', 'success');
+        this.progressImportText = '';
+        this.pollImport(r.review_id, 0);
+      } catch (e) {
+        this.toast('导入失败：' + ((e && e.message) || e), 'error');
+      } finally {
+        this.progressImporting = false;
+      }
+    },
+    async pollImport(reviewId, n) {
+      if (n > 90) { this.toast('分析超时，稍后刷新查看', 'error'); return; }
+      try {
+        const st = await api.reviewStatus(reviewId);
+        if (st.status === 'done') {
+          this.toast('棋谱分析完成', 'success');
+          await this.selectProgressProfile(this.progressProfileId);
+          await this.refreshInsight();
+          return;
+        }
+        if (st.status === 'failed') {
+          this.toast('棋谱分析失败：' + (st.error || '未知错误'), 'error');
+          return;
+        }
+      } catch (e) { /* 忽略轮询错误，继续 */ }
+      setTimeout(() => this.pollImport(reviewId, n + 1), 2500);
+    },
+    async attachCurrentReview() {
+      const pid = this.attachProfileId || this.progressProfileId;
+      if (!pid) { this.toast('请先选择档案', 'error'); return; }
+      if (!this.reviewId) { this.toast('当前没有已分析的棋谱', 'error'); return; }
+      try {
+        await api.attachReview(pid, this.reviewId);
+        this.toast('已收藏到档案', 'success');
+        this.loadProfiles();
+      } catch (e) {
+        this.toast('收藏失败：' + ((e && e.message) || e), 'error');
+      }
+    },
+    async openGameReview(reviewId) {
+      if (!reviewId) return;
+      this.switchView('review');
+      this.$nextTick(async () => {
+        try {
+          const detail = await api.reviewDetail(reviewId, true);
+          if (detail && detail.id) {
+            this.reviewId = detail.id;
+            this.reviewDetail = detail;
+            this.curveData = detail.winrate_curve || [];
+            this.totalMoves = this.curveData.length;
+            if (detail.sgf_text) this.loadSgf(detail.sgf_text);
+            this.toast('已载入该局复盘', 'success');
+          }
+        } catch (e) {
+          this.toast('复盘载入失败：' + ((e && e.message) || e), 'error');
+        }
+      });
+    },
+    goPracticeFromAdvice(theme) {
+      const map = {
+        做活: 'life_death', 杀棋: 'life_death', 对杀: 'capturing_race',
+        吃棋筋: 'middle', 逃棋筋: 'middle', 中盘要点: 'middle',
+        收官最大: 'endgame',
+      };
+      this.practiceTheme = map[theme] || '';
+      this.practiceList = [];
+      this.switchView('practice');
+      this.loadLibrary();
+    },
+    insightTrendCn() {
+      const f = this.progressInsight && this.progressInsight.insight
+        && this.progressInsight.insight.features;
+      return { improving: '📈 进步中', declining: '📉 有所退步', flat: '➡ 平稳' }[f && f.trend] || '';
+    },
+    drawPhaseChart() {
+      const f = this.progressInsight && this.progressInsight.insight
+        && this.progressInsight.insight.features;
+      const canvas = document.getElementById('progress-phase-canvas');
+      if (!canvas || !f || !f.phases) return;
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = canvas.clientWidth || 420;
+      const cssH = 150;
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+      const labels = [['layout', '布局'], ['middle', '中盘'], ['endgame', '官子']];
+      const vals = labels.map((x) => (f.phases[x[0]] ? f.phases[x[0]].avg_loss : 0));
+      const maxV = Math.max.apply(null, vals.concat([0.02]));
+      const gap = (cssW - 70) / 3;
+      const bw = Math.min(70, gap * 0.62);
+      const baseY = cssH - 26;
+      const colors = ['#d69e2e', '#2b6cb0', '#2f855a'];
+      ctx.font = '12px sans-serif';
+      labels.forEach((x, i) => {
+        const h = Math.max(2, (vals[i] / maxV) * (cssH - 56));
+        const bx = 40 + gap * i + (gap - bw) / 2;
+        const by = baseY - h;
+        ctx.fillStyle = colors[i];
+        ctx.fillRect(bx, by, bw, h);
+        ctx.fillStyle = '#6b5330';
+        ctx.textAlign = 'center';
+        ctx.fillText(vals[i].toFixed(3), bx + bw / 2, by - 6);
+        ctx.fillText(x[1], bx + bw / 2, cssH - 8);
+      });
+      ctx.fillStyle = '#9a927f';
+      ctx.textAlign = 'left';
+      ctx.fillText('各阶段平均每手损失（越低越好）', 6, 14);
+    },
     async requestExplain() {
       const n = this.explainMoveNumber;
       if (!n || this.explainLoading) return;
@@ -2771,6 +3011,7 @@ createApp({
   },
 
   mounted() {
+    window.__app = this; // 便于自动化验收/调试
     window.addEventListener('resize', this.onResize);
     if (window.ResizeObserver) {
       this._hostRO = new ResizeObserver(() => this.syncBoardWidths());

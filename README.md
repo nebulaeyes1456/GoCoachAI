@@ -25,6 +25,11 @@ out variations **in sync with the commentary** on the board, and helps you train
   explanations after you solve them.
 - **Capture any position as a problem** — while reviewing a game, one click turns the
   current local position into a verified practice problem.
+- **Growth profiles (成长视图)** — create one profile per player, archive reviewed games
+  or import external SGF files into a per-player game library, and get a computed
+  **skill portrait**: per-phase average loss, weakness ranking, estimated rank, and
+  recent trend. The AI coach then writes a personalized improvement plan with themed
+  homework that links straight into the problem library.
 - **Play against a human-like AI** — adjustable strength profiles (20 kyu to 1 dan)
   powered by KataGo's human-simulation model, with instant hints when you blunder.
 - **AI voice commentary** — optional text-to-speech so you can listen instead of read.
@@ -89,7 +94,8 @@ No LLM? Everything else (analysis, review, practice, play) still works.
 ## Repository layout
 
 ```
-backend/     FastAPI services: review, coach (LLM), problems, play, engine
+backend/     FastAPI services: review, coach (LLM), problems, play, engine,
+             progress (player profiles, archives, skill portraits)
 frontend/    Vue3 SPA (no build): board, curves, commentary player
 engine/      KataGo executables + networks (see engine/README or LICENSE)
 scripts/     importers, problem seeders, e2e Playwright checks

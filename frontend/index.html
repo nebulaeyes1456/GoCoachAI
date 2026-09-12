@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light">
   <title>弈友 v2</title>
-  <link rel="stylesheet" href="css/style.css?v=20260910j">
+  <link rel="stylesheet" href="css/style.css?v=20260912a">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -33,6 +33,7 @@
       <a id="tab-note" :class="{ active: view === 'note' }" href="javascript:void(0)" @click="switchView('note')">记谱</a>
       <a id="tab-play" :class="{ active: view === 'play' }" href="javascript:void(0)" @click="switchView('play')">对弈</a>
       <a id="tab-ask" :class="{ active: view === 'ask' }" href="javascript:void(0)" @click="switchView('ask')">答疑</a>
+      <a id="tab-progress" :class="{ active: view === 'progress' }" href="javascript:void(0)" @click="switchView('progress')">成长</a>
     </nav>
     <span class="spacer"></span>
     <label class="source-switch" v-if="!prodMode">数据源
@@ -53,6 +54,14 @@
         <button class="btn btn-sm" id="btn-sgf-toggle" @click="sgfCollapsed = !sgfCollapsed">
           {{ sgfCollapsed ? '▸ 展开' : '▾ 收起' }}
         </button>
+        <span class="attach-row" v-if="reviewId">
+          <select id="attach-profile-select" v-model="attachProfileId" class="attach-select"
+            title="选择要收藏到的档案">
+            <option value="">选择档案…</option>
+            <option v-for="p in progressProfiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+          <button class="btn btn-sm" @click="attachCurrentReview">📁 收藏本局</button>
+        </span>
         <span class="muted small" v-if="sgfCollapsed">{{ loadedInfo }}</span>
       </div>
       <template v-if="!sgfCollapsed">
@@ -505,6 +514,164 @@
       </div>
     </section>
 
+    <!-- ============ 成长视图（棋手档案 / 棋谱库 / 水平画像 / 提高建议） ============ -->
+    <section id="view-progress" v-show="view === 'progress'">
+      <div class="panel progress-head">
+        <div class="row" style="flex-wrap:wrap;gap:.5rem">
+          <label class="fld" style="min-width:200px">
+            <span>当前档案</span>
+            <select id="progress-profile-select" v-model="progressProfileId"
+              @change="selectProgressProfile(progressProfileId)">
+              <option v-for="p in progressProfiles" :key="p.id" :value="p.id">
+                {{ p.name }}（{{ p.games_count }} 局）
+              </option>
+            </select>
+          </label>
+          <label class="fld">
+            <span>新建档案</span>
+            <input id="progress-new-name" v-model="progressNewName" placeholder="如：小明"
+              @keyup.enter="createProfile" style="width:120px">
+          </label>
+          <button class="btn btn-primary" @click="createProfile">＋ 创建档案</button>
+          <button class="btn" :disabled="!progressProfileId" @click="deleteCurrentProfile">删除档案</button>
+          <span class="muted small">每个档案独立记录棋谱与画像，适合一家多口共用</span>
+        </div>
+      </div>
+
+      <div class="progress-grid">
+        <!-- 左：棋谱库 -->
+        <div class="col-library">
+          <section class="panel">
+            <div class="panel-title">棋谱库
+              <button class="btn btn-sm" @click="progressImportOpen = !progressImportOpen">
+                {{ progressImportOpen ? '▾ 收起导入' : '▸ 导入 SGF' }}
+              </button>
+              <span class="muted small" v-if="progressLoading">加载中…</span>
+            </div>
+            <template v-if="progressImportOpen">
+              <textarea id="progress-import-sgf" v-model="progressImportText" spellcheck="false"
+                placeholder="粘贴 SGF 棋谱，导入后自动用 KataGo 分析并计入当前档案……"></textarea>
+              <div class="row">
+                <button class="btn btn-primary"
+                  :disabled="progressImporting || !progressImportText.trim()"
+                  @click="importSgfToProfile">导入并分析</button>
+                <span class="muted small" v-if="progressImporting">提交中…</span>
+                <span class="muted small">导入后约 1~2 分钟完成分析（fast 档）</span>
+              </div>
+            </template>
+            <div class="goc-empty" v-if="!progressProfileId">请先选择或创建档案</div>
+            <div class="goc-empty"
+              v-else-if="progressDetail && !progressDetail.games.length">
+              暂无棋谱：复盘分析完成后点「📁 收藏本局」，或在此导入 SGF。
+            </div>
+            <div class="game-list" v-else-if="progressDetail">
+              <div class="game-item" v-for="g in progressDetail.games" :key="g.review_id">
+                <span class="game-date">{{ (g.created_at || '').slice(0, 10) }}</span>
+                <span class="game-info">
+                  {{ g.board_size }} 路 · {{ g.moves_count }} 手
+                  <span v-if="g.blunders" class="badge badge-blunder">{{ g.blunders }} 坏</span>
+                  <span v-if="g.questions" class="badge badge-question">{{ g.questions }} 疑</span>
+                  <span v-if="g.good" class="badge badge-good">{{ g.good }} 好</span>
+                </span>
+                <button class="btn btn-sm" @click="openGameReview(g.review_id)">复盘</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- 右：画像 + 建议 -->
+        <div class="col-insight">
+          <section class="panel">
+            <div class="panel-title">水平画像
+              <button class="btn btn-sm" :disabled="progressInsightLoading || !progressProfileId"
+                @click="refreshInsight">
+                {{ progressInsightLoading ? '计算中…' : '🔄 重新计算' }}
+              </button>
+            </div>
+            <div class="goc-empty" v-if="!progressProfileId">选择档案后显示画像</div>
+            <div class="goc-empty" v-else-if="!progressInsight">
+              暂无画像：至少需要 1 局已分析棋谱，然后点「重新计算」。
+            </div>
+            <div v-else-if="progressInsight.insight && progressInsight.insight.features">
+              <div class="stat-cards">
+                <div class="stat-card">
+                  <div class="stat-num">{{ progressInsight.insight.features.n_games }}</div>
+                  <div class="stat-label">棋谱数</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-num">{{ progressInsight.insight.features.avg_loss_per_move.toFixed(3) }}</div>
+                  <div class="stat-label">每手平均损失</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-num rank">{{ progressInsight.insight.rank_estimate }}</div>
+                  <div class="stat-label">估算级位 {{ insightTrendCn() }}</div>
+                </div>
+              </div>
+              <div class="chart-box"><canvas id="progress-phase-canvas"></canvas></div>
+              <div class="insight-lines">
+                <div>最弱环节：<b>{{ progressInsight.insight.features.weakest }}</b>
+                  （每手损失 {{ progressInsight.insight.features.weakest_loss.toFixed(3) }}）</div>
+                <div>失误分布：方向 {{ progressInsight.insight.features.direction_errors }}
+                  · 计算 {{ progressInsight.insight.features.complexity_errors }}
+                  · 读棋 {{ progressInsight.insight.features.reading_errors }}</div>
+                <div>坏棋 {{ progressInsight.insight.features.blunders }}
+                  · 疑问手 {{ progressInsight.insight.features.questions }}
+                  · 好手 {{ progressInsight.insight.features.good_moves }}</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">AI 提高建议
+              <button class="btn btn-sm btn-primary"
+                :disabled="progressAdviceLoading || !progressProfileId"
+                @click="generateAdvice">
+                {{ progressAdviceLoading ? '生成中…' : (progressAdvice ? '♻ 重新生成' : '✨ 生成建议') }}
+              </button>
+            </div>
+            <div class="goc-empty" v-if="!progressProfileId">选择档案后生成建议</div>
+            <div class="goc-empty" v-else-if="!progressInsight">先计算画像，再生成建议</div>
+            <div class="goc-empty" v-else-if="!progressAdvice">
+              点「生成建议」让 AI 教练根据画像定制提高计划（消耗少量 API 额度）
+            </div>
+            <div class="advice-body" v-else>
+              <p class="advice-summary">{{ progressAdvice.summary }}</p>
+              <div class="advice-block">
+                <div class="explain-label">优点</div>
+                <ul class="advice-list">
+                  <li v-for="s in progressAdvice.strengths" :key="s">{{ s }}</li>
+                </ul>
+              </div>
+              <div class="advice-block">
+                <div class="explain-label">短板</div>
+                <ul class="advice-list">
+                  <li v-for="w in progressAdvice.weaknesses" :key="w">{{ w }}</li>
+                </ul>
+              </div>
+              <div class="advice-block">
+                <div class="explain-label">训练计划</div>
+                <div class="plan-item" v-for="(p, i) in progressAdvice.plan" :key="i">
+                  <div class="plan-head"><b>{{ i + 1 }}. {{ p.focus }}</b>
+                    <span class="badge badge-theme">{{ p.theme }}</span>
+                    <button class="btn btn-sm" @click="goPracticeFromAdvice(p.theme)">去练题</button>
+                  </div>
+                  <div class="muted small">{{ p.why }}</div>
+                  <div class="muted small">练习：{{ p.practice }}</div>
+                </div>
+              </div>
+              <div class="advice-block">
+                <div class="explain-label">本周作业</div>
+                <ul class="advice-list" v-if="Array.isArray(progressAdvice.homework)">
+                  <li v-for="h in progressAdvice.homework" :key="h">{{ h }}</li>
+                </ul>
+                <div class="muted" v-else>{{ progressAdvice.homework }}</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ 记谱视图（棋盘对弈记录 + 胜率 + 试下研究） ============ -->
     <section id="view-note" v-show="view === 'note'" class="grid-main">
       <div class="col-board">
@@ -717,7 +884,7 @@
 <script src="assets/wgo/kifu.js?v=231"></script>
 <script src="assets/wgo/sgfparser.js?v=231"></script>
 <!-- 页面脚本（ESM，内部引入本地 Vue ESM 构建） -->
-<script type="module" src="js/app.js?v=20260910d"></script>
+<script type="module" src="js/app.js?v=20260912a"></script>
 </body>
 </html>
 

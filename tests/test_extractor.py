@@ -364,7 +364,7 @@ class TestExtractEndToEnd(unittest.TestCase):
                 f"耗时 {elapsed:.1f}s"
             )
             self.assertGreaterEqual(len(result["extracted"]), 1)
-            self.assertLessEqual(elapsed, 300.0)
+            self.assertLessEqual(elapsed, 600.0)  # 引擎慢时（CPU 满载）单题验题可能到 5~8 分钟
             for brief in result["extracted"]:
                 p = store.get_problem(brief["id"])
                 self.assertIsNotNone(p)

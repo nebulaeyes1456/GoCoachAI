@@ -301,7 +301,7 @@ class VersionAndInfoEndpointTest(SystemOpsTestBase):
         resp = self.client.get("/api/v1/system/version")
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
-        self.assertEqual(body["version"], "0.9.0")
+        self.assertEqual(body["version"], "1.6.0")
         self.assertEqual(body["engine_backend"], "eigenavx2")
         # schema 版本随迁移递增：以数据库实际版本为准
         self.assertEqual(body["schema_version"], db_schema_version())

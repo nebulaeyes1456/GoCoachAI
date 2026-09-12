@@ -70,6 +70,7 @@ class ReviewDetailResponse(BaseModel):
     key_moves: list[MoveInfo] = Field(default_factory=list)
     stats: ReviewStats = Field(default_factory=ReviewStats)
     final_ownership: list[float] = Field(default_factory=list)  # 终局目数热图 [-1,1]
+    sgf_text: Optional[str] = None  # 仅 include_sgf=true 时返回
 
 
 # ---------------------------------------------------------------------------
@@ -410,3 +411,89 @@ class VersionResponse(BaseModel):
 #   summary -> SummaryContent
 #   answer  -> AskAnswerContent
 ExplanationContent = MoveExplanationContent | SummaryContent | AskAnswerContent
+
+
+
+# ---------------------------------------------------------------------------
+# §4.6 棋手档案 / 棋谱库 / 水平画像（成长视图）
+# ---------------------------------------------------------------------------
+
+class ProfileCreateRequest(BaseModel):
+    """创建棋手档案。"""
+
+    name: str
+    note: str = ""
+
+
+class PlayerProfile(BaseModel):
+    """档案摘要。"""
+
+    id: str
+    name: str
+    note: str = ""
+    games_count: int = 0
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class ProfileListResponse(BaseModel):
+    profiles: list[PlayerProfile] = Field(default_factory=list)
+
+
+class ProfileGameBrief(BaseModel):
+    """档案内一局棋的摘要。"""
+
+    review_id: str
+    black: str = ""
+    white: str = ""
+    board_size: int = 19
+    moves_count: int = 0
+    status: str = "done"
+    created_at: Optional[str] = None
+    blunders: int = 0
+    questions: int = 0
+    good: int = 0
+    imported: bool = False
+
+
+class ProfileDetailResponse(BaseModel):
+    """档案详情：档案 + 棋谱列表 + 画像。"""
+
+    profile: PlayerProfile
+    games: list[ProfileGameBrief] = Field(default_factory=list)
+    insight: Optional[dict] = None
+
+
+class ProfileAttachRequest(BaseModel):
+    """把已分析的复盘归档到档案。"""
+
+    profile_id: str
+    review_id: str
+
+
+class ProfileImportRequest(BaseModel):
+    """导入外部 SGF 到档案（自动复盘分析后归档）。"""
+
+    profile_id: str
+    sgf_text: str
+    review_profile: str = "fast"
+
+
+class ProfileImportResponse(BaseModel):
+    review_id: str
+    status: str = "pending"
+
+
+class ProfileInsightResponse(BaseModel):
+    """画像 + 建议。"""
+
+    profile_id: str
+    insight: dict = Field(default_factory=dict)
+    model: Optional[str] = None
+    cost: float = 0.0
+
+
+class ProfileAdviceRequest(BaseModel):
+    """生成/刷新 AI 提高建议。"""
+
+    profile_id: str

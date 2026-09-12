@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .common import db, serverlog
 from .common.settings import FRONTEND_DIR, get_settings
-from .routers import coach, play, problems, review, system
+from .routers import coach, play, problems, progress, review, system
 from .services.engine import backend as engine_backend
 from .services.review import service as review_service
 
@@ -44,7 +44,7 @@ async def lifespan(_app: FastAPI):
     review_service.get_service().stop()
 
 
-app = FastAPI(title="GoCoachAI", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="GoCoachAI", version="1.6.0", lifespan=lifespan)
 
 # API 路由（§4）
 app.include_router(system.router)
@@ -53,6 +53,7 @@ app.include_router(review.ws_router)
 app.include_router(coach.router)
 app.include_router(play.router)
 app.include_router(problems.router)
+app.include_router(progress.router)
 
 # 前端静态资源（§2：后端挂载 frontend/）
 app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="assets")

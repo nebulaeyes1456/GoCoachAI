@@ -604,8 +604,111 @@ def build_deep_messages(review: dict, level: str = "-5") -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# PROBLEM_EXPLAIN（练习深度讲解：同步讲棋分段 + 死活结果 + 脱先判断）
+# PROGRESS_ADVICE（成长视图：棋力画像 → 针对性提高建议）
 # ---------------------------------------------------------------------------
+
+PROGRESS_ADVICE_SCHEMA = {
+    "summary": str,
+    "strengths": list,
+    "weaknesses": list,
+    "plan": list,
+    "homework": list,
+}
+
+_PHASE_CN = {"layout": "布局", "middle": "中盘", "endgame": "官子"}
+
+
+def build_progress_advice_messages(name: str, insight: dict,
+                                   samples: list[dict]) -> list[dict]:
+    """把画像特征与典型坏手样本交给 LLM，生成针对性提高建议。"""
+    f = insight or {}
+    rates = f.get("rates") or {}
+    phases = f.get("phases") or {}
+    phase_lines = []
+    for key, cn in _PHASE_CN.items():
+        p = phases.get(key) or {}
+        bl = p.get("blunder_rate")
+        line = (
+            f"- {cn}：平均每手损失 {p.get('avg_loss', 0):.3f}，"
+            f"坏手率 {bl:.1%}（共 {p.get('moves', 0)} 手）"
+            if isinstance(bl, (int, float))
+            else f"- {cn}：平均每手损失 {p.get('avg_loss', 0):.3f}"
+        )
+        phase_lines.append(line)
+
+    sample_lines = []
+    for s in samples or []:
+        ph = _PHASE_CN.get(s.get("phase"), "")
+        sample_lines.append(
+            f"  {ph} 第{s.get('move_number')}手 下了 {s.get('coord')}，"
+            f"胜率损失 {abs(s.get('delta') or 0):.1%}，"
+            f"一选应为 {s.get('best_coord') or '未知'}"
+        )
+
+    trend_cn = {"improving": "进步中", "declining": "有所退步", "flat": "平稳"}.get(
+        f.get("trend"), "平稳")
+    data_lines = [
+        f"棋手：{name}",
+        f"样本：{f.get('n_games', 0)} 局，平均每局 {f.get('avg_moves', 0)} 手",
+        f"平均每手失误：{f.get('avg_loss_per_move', 0):.3f}（胜率损失绝对值）",
+        f"参考棋力区间：{f.get('rank_estimate') or '未知'}（基于样本的粗略估计）",
+        f"坏手率 {rates.get('blunder', 0):.1%}，疑问手率 "
+        f"{rates.get('question', 0):.1%}，好手率 {rates.get('good', 0):.1%}",
+        "分阶段画像：",
+        *phase_lines,
+        f"最弱环节：{f.get('weakest_phase') or '未知'}",
+        f"近期趋势：{trend_cn}"
+        + (f"（近期平均损失 {f.get('recent_loss', 0):.3f} vs 早期 "
+           f"{f.get('earlier_loss', 0):.3f}）"
+           if f.get('recent_loss') is not None else ""),
+    ]
+    if f.get("calc_blunder_share") is not None:
+        data_lines.append(
+            f"复杂局面（高不确定性）中的坏手占比："
+            f"{f['calc_blunder_share']:.0%}（高=计算力偏弱）"
+        )
+    if f.get("direction_blunder_share") is not None:
+        data_lines.append(
+            f"方向性失误占比（一选距离本手 ≥3 格的坏手）："
+            f"{f['direction_blunder_share']:.0%}（高=大局观/方向感偏弱）"
+        )
+    if sample_lines:
+        data_lines.append("典型坏手样本：")
+        data_lines.extend(sample_lines)
+
+    user = "\n".join(
+        [
+            "你是一名围棋教练，正在给一位学生做阶段性评估。"
+            "下面是这位学生的棋力画像数据（全部来自 KataGo 对局分析统计）。",
+            "",
+            "【输入数据】",
+            *data_lines,
+            "",
+            "【输出要求】只输出一个 JSON 对象，字段如下（全部必填）：",
+            "- summary: 3~5 句总评：先肯定优点，再点出最影响进步的一两个问题，"
+            "语气像教练当面谈话，不堆砌数据；",
+            "- strengths: 字符串数组，2~3 条优势（具体到棋的层面）；",
+            "- weaknesses: 字符串数组，2~4 条短板（按影响排序，"
+            "优先讲最弱环节，结合典型坏手样本）；",
+            "- plan: 训练计划数组，3~5 条，每条 {\"focus\", \"why\", \"practice\", \"theme\"}：",
+            "  * focus：训练重点（如「官子收束」）；",
+            "  * why：为什么针对它（结合画像数据，一两句）；",
+            "  * practice：具体怎么练（每天练多少、练什么，可执行）；",
+            "  * theme：对应题库主题（只允许：做活/杀棋/对杀/吃棋筋/逃棋筋/收官最大/中盘要点，"
+            "选最贴近的一个）；",
+            "- homework: 字符串数组，1~2 条本周可完成的小任务（具体、有数量）。",
+            "",
+            "【硬性规则】",
+            "1. 只依据上面给出的数据，禁止编造胜率或棋谱；",
+            "2. 面向 K 级到业余低段爱好者，建议要具体可执行，不要空话；",
+            "3. 不假装精确段位——引用棋力区间时加上「参考」二字；",
+            "4. 只输出 JSON。",
+        ]
+    )
+    return [
+        {"role": "system", "content": SYSTEM_ROLE},
+        {"role": "user", "content": user},
+    ]
 
 PROBLEM_EXPLAIN_SCHEMA = {
     "result_type": str,

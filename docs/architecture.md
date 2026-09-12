@@ -355,6 +355,51 @@ GET /api/v1/system/version
         "schema_version": 1, "api_prefix": "/api/v1" }
 ```
 
+### 4.5 成长视图（窗口5 实现，2026-09-12）
+
+```
+POST /api/v1/progress/profiles
+  入: { "name": "小明", "note": "九路练习" }
+  出: { "profile": { "id": "pp…", "name": "小明", "note": "",
+                      "games_count": 0, "created_at": "…", "updated_at": "…" } }
+GET /api/v1/progress/profiles
+  出: { "profiles": [ …同上… ] }
+DELETE /api/v1/progress/profiles/{profile_id}
+  出: { "deleted": true }                # 只解除棋谱关联，不删除复盘数据
+GET /api/v1/progress/profiles/{profile_id}
+  出: { "profile": …, "games": [ { "review_id", "board_size", "moves_count",
+          "created_at", "blunders", "questions", "good" } ],
+        "insight": null | { "games_count", "features", "rank_estimate",
+                            "advice", "updated_at" } }
+POST /api/v1/progress/profiles/{profile_id}/attach
+  入: { "review_id": "…" }
+  出: { "attached": true }               # 404 档案/复盘不存在；重复收藏幂等
+POST /api/v1/progress/profiles/{profile_id}/import
+  入: { "sgf_text": "(;…)", "review_profile": "fast" }
+  出: { "review_id": "…", "status": "pending" }   # 提交复盘分析并立即归档
+POST /api/v1/progress/profiles/{profile_id}/insight
+  入: { "force": false }                  # force=true 跳过缓存重算
+  出: { "insight": { "games_count", "features": {
+          "n_games", "avg_loss_per_move", "blunders", "questions", "good_moves",
+          "direction_errors", "complexity_errors", "reading_errors",
+          "weakest", "weakest_loss",
+          "phases": { "layout"|"middle"|"endgame": { "avg_loss", "moves",
+                                                     "blunder_rate" } },
+          "trend": "improving"|"declining"|"flat",
+          "rank_estimate" }, "rank_estimate", "advice", "advice_model" } }
+  说明：无棋谱返回 422；画像按档案缓存，attach/import 后自动失效。
+POST /api/v1/progress/profiles/{profile_id}/advice
+  入: { "force": false }
+  出: { "insight": { …, "advice": { "summary", "strengths": [],
+          "weaknesses": [], "plan": [ { "focus", "why", "practice", "theme" } ],
+          "homework": [] } }, "model": "…", "cost": 0.01 }
+  说明：theme 限定做活/杀棋/对杀/吃棋筋/逃棋筋/收官最大/中盘要点（题库主题）。
+
+GET /api/v1/review/{review_id}?include_sgf=true
+  出: ReviewDetailResponse 增加 sgf_text 字段（仅 include_sgf=true 时返回，
+      供成长页跳复盘重载棋盘用）
+```
+
 ---
 
 ## 5. 配置（config.yaml）
