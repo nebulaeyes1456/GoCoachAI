@@ -150,6 +150,19 @@ MIGRATIONS: list[tuple[int, str]] = [
         " advice TEXT,"
         " advice_model TEXT,"
         " updated_at TEXT);"),
+    # v10：死活题生长链条（定式起点 → 后续死活/对杀变化题）
+    (10, "CREATE TABLE IF NOT EXISTS problem_chains ("
+         "id TEXT PRIMARY KEY,"
+         " name TEXT NOT NULL,"
+         " theme TEXT,"
+         " root_sgf TEXT NOT NULL,"
+         " seed_sgf TEXT,"
+         " description TEXT,"
+         " status TEXT NOT NULL DEFAULT 'draft',"
+         " created_at TEXT);"),
+    # v11：题目挂到链上（chain_step 为链内步序，排序即学习顺序）
+    (11, "ALTER TABLE problems ADD COLUMN chain_id TEXT;"
+         "ALTER TABLE problems ADD COLUMN chain_step INTEGER;"),
 ]
 
 

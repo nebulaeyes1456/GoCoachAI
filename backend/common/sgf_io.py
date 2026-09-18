@@ -86,6 +86,8 @@ class ParsedSGF:
     black: str = ""
     white: str = ""
     moves: list[tuple[str, str]] = field(default_factory=list)  # (color, coord)
+    # AB/AW 摆子（color, coord）；与 moves 同构，便于「摆子局面 + 手顺」一起处理
+    setup: list[tuple[str, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.board_size <= 0:
@@ -93,13 +95,17 @@ class ParsedSGF:
 
 
 _MOVE_RE = re.compile(r";([BW])\[([a-zA-Z]*)\]")
+_SETUP_RE = re.compile(r"(AB|AW)((?:\[[a-zA-Z]*\])+)", re.IGNORECASE)
+_SETUP_PT_RE = re.compile(r"\[([a-zA-Z]*)\]")
 
 
 def parse_sgf(sgf_text: str) -> ParsedSGF:
-    """解析 SGF 文本：棋盘大小、黑白棋手名、主线手数序列。
+    """解析 SGF 文本：棋盘大小、黑白棋手名、摆子（AB/AW）、主线手数序列。
 
     - 仅提取主线（顶层）着法，跳过 ``( ... )`` 分支内的着法；
-    - 坐标经 ``sgf_to_coord`` 换算为界面风格；pass 为 ""。
+    - 坐标经 ``sgf_to_coord`` 换算为界面风格；pass 为 ""；
+    - ``setup``：AB/AW 摆子（连续多枚写法 ``AB[aa][bb]...`` 全部展开），
+      供「摆子局」题面（如古典死活题、题链 seed_sgf）还原局面。
     """
     text = sgf_text or ""
     board_size = 19
@@ -114,6 +120,14 @@ def parse_sgf(sgf_text: str) -> ParsedSGF:
     m = re.search(r"PW\s*\[([^\]]*)\]", text, re.IGNORECASE)
     if m:
         white = m.group(1).strip()
+
+    setup: list[tuple[str, str]] = []
+    for m2 in _SETUP_RE.finditer(text):
+        color = "B" if m2.group(1).upper() == "AB" else "W"
+        for pt in _SETUP_PT_RE.findall(m2.group(2)):
+            coord = sgf_to_coord(pt, board_size)
+            if coord:
+                setup.append((color, coord))
 
     moves: list[tuple[str, str]] = []
     depth = 0
@@ -136,4 +150,7 @@ def parse_sgf(sgf_text: str) -> ParsedSGF:
                 moves.append((color, coord))
                 i += m.end() - i - 1
         i += 1
-    return ParsedSGF(board_size=board_size, black=black, white=white, moves=moves)
+    return ParsedSGF(
+        board_size=board_size, black=black, white=white, moves=moves,
+        setup=setup,
+    )

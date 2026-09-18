@@ -327,7 +327,15 @@ createApp({
       practiceList: [],
       practicePage: 0,        // 题库分页（0 基，每页 50 题）
       practiceSort: 'easiest', // 难度排序：easiest 从易到难 | hardest 从难到易 | '' 最新
-      practiceMode: 'list',   // 'list' 题库列表 | 'solve' 做题子页面
+      practiceMode: 'list',   // 'list' 题库列表 | 'chains' 题链列表 | 'chain' 链详情 | 'solve' 做题子页面
+      // ---- v1.7.0：死活题生长链条 ----
+      practiceChains: [],     // 链列表
+      practiceChain: null,    // 当前链详情 { chain, problems }
+      chainsLoading: false,
+      chainsError: '',
+      chainDetailLoading: false,
+      chainDetailError: '',
+      practiceChainId: '',    // 非空 = 当前做题会话属于该链（连续练习）
       deepLoading: false,     // 深度分析生成中
       deepData: null,         // 深度分析报告
       deepError: '',          // 深度分析降级提示
@@ -587,6 +595,16 @@ createApp({
     themeName(t) {
       return { life_death: '死活', capturing_race: '对杀', endgame: '官子', middle: '中盘' }[t] || t;
     },
+    chainThemeName(t) {
+      return { life_death: '死活', capturing_race: '对杀', mixed: '综合' }[t] || this.themeName(t);
+    },
+    chainThemesText(themes) {
+      return (themes || []).map((t) => this.themeName(t)).join(' / ');
+    },
+    chainNameById(id) {
+      const c = (this.practiceChains || []).find((x) => x.id === id);
+      return c ? c.name : '';
+    },
     rankLabel(min, max) {
       const fmt = (r) => {
         if (r === null || r === undefined) return '?';
@@ -626,6 +644,7 @@ createApp({
     },
     onThemeChange() {
       this.practicePage = 0;
+      this.practiceChainId = '';
       this.loadLibrary();
     },
     onSortChange() {
@@ -657,6 +676,7 @@ createApp({
     backToPracticeList() {
       // 返回题库列表（清空做题状态，下次进入重新加载）
       this.practiceMode = 'list';
+      this.practiceChainId = '';
       this.practiceProblem = null;
       this.attemptResult = null;
       this.practiceWrongCount = 0;
@@ -666,6 +686,60 @@ createApp({
       practiceBoard = null;
       practiceReader = null;
       practiceTrialGame = null;
+    },
+    // ---------------- v1.7.0：死活题生长链条 ----------------
+    async openChains() {
+      this.practiceMode = 'chains';
+      if (!this.practiceChains.length || this.chainsError) await this.loadChains();
+    },
+    async loadChains() {
+      this.chainsLoading = true;
+      this.chainsError = '';
+      try {
+        const r = await api.chains();
+        this.practiceChains = (r && r.chains) || [];
+      } catch (e) {
+        this.chainsError = '题链加载失败：' + ((e && e.message) || e);
+        this.practiceChains = [];
+      } finally {
+        this.chainsLoading = false;
+      }
+    },
+    async openChain(chainId) {
+      this.practiceMode = 'chain';
+      this.chainDetailLoading = true;
+      this.chainDetailError = '';
+      this.practiceChain = null;
+      try {
+        this.practiceChain = await api.chainDetail(chainId);
+      } catch (e) {
+        this.chainDetailError = '链详情加载失败：' + ((e && e.message) || e);
+      } finally {
+        this.chainDetailLoading = false;
+      }
+    },
+    // 连续练习：把做题会话切到链上题（做完一题「下一题」自动进入下一变）
+    startChainPractice() {
+      if (!this.practiceChain || !this.practiceChain.problems.length) return;
+      this.selectChainProblem(0);
+    },
+    selectChainProblem(i) {
+      const detail = this.practiceChain;
+      if (!detail || !detail.problems.length) return;
+      const list = detail.problems;
+      const idx = Math.max(0, Math.min(i, list.length - 1));
+      this.practiceList = list;          // 会话题库 = 链上题（nextProblem 沿链走）
+      this.practiceTotal = list.length;
+      this.practiceTotalPages = 1;
+      this.practicePage = 0;
+      this.practiceChainId = detail.chain.id;
+      this.selectProblem(list[idx], idx);
+    },
+    // 做题页返回：链内练习回到链详情，否则回题库列表
+    backFromSolve() {
+      const chainId = this.practiceChainId;
+      this.backToPracticeList();
+      if (chainId) this.openChain(chainId);
     },
     // 题面渲染：WGo.SGF.parse → WGo.Board → WGo.KifuReader 初始 change（含 AB/AW 摆子）
     buildPracticeBoard(detail) {
@@ -960,8 +1034,16 @@ createApp({
           if (this.showHeat) this.drawHeat('review-heat-canvas', 'board-host', this.heatOwnership());
         });
       }
-      // 数据源切换后练习题库随之刷新（真实题库 ↔ mock 题库）
-      if (this.view === 'practice') this.loadLibrary();
+      // 数据源切换后练习题库随之刷新（真实题库 ↔ mock 题库）；
+      // 题链同理：清缓存 + 回到题库列表，避免真实模式下显示 mock 链/旧题
+      this.practiceChains = [];
+      this.practiceChain = null;
+      if (this.view === 'practice') {
+        if (this.practiceMode !== 'list') this.backToPracticeList();
+        this.loadLibrary();
+      } else {
+        this.practiceChainId = '';
+      }
     },
     async requestDeep() {
       if (!this.reviewId || this.deepLoading) return;
@@ -1772,6 +1854,9 @@ createApp({
     // ================= 同步讲棋：讲解分段与棋盘变化联动 =================
     sanitizeVarForPlay(b, variation) {
       // 用 WGo.Game 当裁判过滤非法落子（LLM 偶发拼出非法序列，如提劫点重复）
+      // b 为空 = 棋盘已重建/退出（如答对后自动同步讲棋期间点「下一题」），
+      // 此时直接放弃本段，避免空引用
+      if (!b) return [];
       const g = gameFromBoard(b, 'B');
       const kept = [];
       for (const step of variation || []) {

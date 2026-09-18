@@ -99,8 +99,13 @@ def attempt(problem_id: str, coord: str, db_path=None) -> dict:
     result = _branch_result(problem, norm)
     if result is None:
         try:
+            # 题链题（v1.7.0）验题走局部聚焦，补查沿用同一口径，
+            # 避免反馈里的胜率与 branches 里的数不是一套尺度
+            allow = branches.get("allow_moves")
+            allow = [str(c) for c in allow] if isinstance(allow, list) else None
             verifies = verify_position(
-                problem["setup_sgf"], [norm], profile="standard"
+                problem["setup_sgf"], [norm], profile="standard",
+                allow_moves=allow,
             )
             if verifies:
                 result = {

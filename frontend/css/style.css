@@ -742,3 +742,38 @@ label.fld > span { color: var(--text); }
 }
 .plan-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .25rem; font-size: .9rem; }
 .plan-head .btn { margin-left: auto; }
+
+/* ---------------- 死活题生长链条（v1.7.0） ---------------- */
+.chain-cards { display: flex; flex-direction: column; gap: .55rem; }
+.chain-card {
+  padding: .6rem .7rem; border: 1px solid #e6ddc6; border-radius: 10px;
+  background: #fffdf5; cursor: pointer; transition: border-color .15s, background .15s;
+}
+.chain-card:hover { border-color: var(--accent); background: #f6faff; }
+.chain-card-head { display: flex; align-items: center; gap: .5rem; }
+.chain-card-name { font-weight: 700; }
+.chain-card-desc { font-size: .82rem; color: var(--muted); margin-top: .2rem; }
+.chain-card-meta { font-size: .76rem; color: var(--muted); margin-top: .25rem; }
+
+.chain-timeline { margin-top: .6rem; position: relative; padding-left: 1.5rem; }
+.chain-timeline::before {
+  content: ''; position: absolute; left: .45rem; top: .3rem; bottom: .3rem;
+  width: 2px; background: #e6ddc6;
+}
+.chain-step { position: relative; padding-bottom: .7rem; }
+.chain-step-dot {
+  position: absolute; left: -1.5rem; top: .15rem; width: 1.1rem; height: 1.1rem;
+  line-height: 1.1rem; text-align: center; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: .72rem;
+}
+.chain-step-body {
+  border: 1px solid #e6ddc6; border-radius: 8px; background: #fffdf5;
+  padding: .45rem .6rem;
+}
+.chain-step-title { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.chain-step-hint { font-size: .82rem; margin-top: .2rem; }
+.chain-step-foot {
+  display: flex; align-items: center; gap: .5rem; margin-top: .35rem;
+  font-size: .76rem; color: var(--muted);
+}
+.badge-chain { background: #efe6ff; color: #5b3ba8; }

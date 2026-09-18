@@ -136,7 +136,9 @@ function reviewDetail() {
 const MOCK_PROBLEMS = [
   {
     id: 'mock-p1',
-    source: 'library',
+    source: 'chain',
+    chain_id: 'chain-tuotui',
+    chain_step: 1,
     theme: 'life_death',
     goal: '做活',
     rank_min: -8, rank_max: -4,
@@ -153,8 +155,11 @@ const MOCK_PROBLEMS = [
   },
   {
     id: 'mock-p2',
-    source: 'library',
+    source: 'chain',
+    chain_id: 'chain-tuotui',
+    chain_step: 2,
     theme: 'capturing_race',
+    goal: '对杀',
     rank_min: -7, rank_max: -3,
     setup_sgf: '(;GM[1]FF[4]CA[UTF-8]SZ[9]PL[B]' +
       'AB[ee][ed][fd]' +
@@ -169,8 +174,11 @@ const MOCK_PROBLEMS = [
   },
   {
     id: 'mock-p3',
-    source: 'library',
-    theme: 'endgame',
+    source: 'chain',
+    chain_id: 'chain-shuangfeiyan',
+    chain_step: 1,
+    theme: 'capturing_race',
+    goal: '对杀',
     rank_min: -9, rank_max: -2,
     setup_sgf: '(;GM[1]FF[4]CA[UTF-8]SZ[9]PL[B]' +
       'AB[cg][dg][cf][df][fc][gc]' +
@@ -179,9 +187,31 @@ const MOCK_PROBLEMS = [
     branches: '[]',
     // 正解变化（至少 5 步，与 explanation 吻合：白 B9 挡后黑 C8 接）
     variation: ['B8', 'B9', 'C8', 'C9', 'D8'],
-    verdict: '黑 B8 是先手官子，白须 B9 挡，黑得利约 2 目。',
-    hint: '黑先，请收束左上角官子。',
-    explanation: '黑 B8 扳是当前最大官子，白若脱先黑可继续爬入。白 B9 挡后黑 C8 接，先手定型；注意不要从 C8 爬，那是后手。',
+    verdict: '黑 B8 是紧气要点，白须 B9 挡，黑先手吃掉白两子。',
+    hint: '黑先，请找出双飞燕之后角部对杀的要点。',
+    explanation: '黑 B8 扳是当前最大的一手，白若脱先黑可继续爬入。白 B9 挡后黑 C8 接，先手定型；注意不要从 C8 爬，那是后手。',
+  },
+];
+
+// 死活题生长链条（mock 演示：2 条链）
+const MOCK_CHAINS = [
+  {
+    id: 'chain-tuotui',
+    name: '托退定式',
+    theme: 'mixed',
+    description: '从小目托退定式出发，长出角部做活与对杀变化——看清「这个死活是从哪里来的」。',
+    status: 'active',
+    created_at: '2026-09-18T09:00:00',
+    steps: ['mock-p1', 'mock-p2'],
+  },
+  {
+    id: 'chain-shuangfeiyan',
+    name: '双飞燕',
+    theme: 'capturing_race',
+    description: '星位双飞燕之后的角部对杀：谁先紧气谁得利。',
+    status: 'active',
+    created_at: '2026-09-18T09:05:00',
+    steps: ['mock-p3'],
   },
 ];
 
@@ -189,6 +219,39 @@ function problemBrief(p) {
   return {
     id: p.id, theme: p.theme, rank_min: p.rank_min,
     rank_max: p.rank_max, setup_sgf: p.setup_sgf, hint: p.hint,
+    chain_id: p.chain_id || null, chain_step: p.chain_step || null,
+  };
+}
+
+function chainProblems(chain) {
+  return chain.steps
+    .map((pid) => MOCK_PROBLEMS.find((p) => p.id === pid))
+    .filter(Boolean);
+}
+
+function chainBrief(chain) {
+  const items = chainProblems(chain);
+  const themes = [];
+  items.forEach((p) => { if (p.theme && !themes.includes(p.theme)) themes.push(p.theme); });
+  return {
+    id: chain.id, name: chain.name, theme: chain.theme,
+    description: chain.description, status: chain.status,
+    problems_count: items.length, themes,
+    created_at: chain.created_at,
+  };
+}
+
+function chainDetail(chain) {
+  return {
+    chain: chainBrief(chain),
+    root_sgf: '',
+    problems: chainProblems(chain).map((p) => ({
+      id: p.id, theme: p.theme, goal: p.goal,
+      rank_min: p.rank_min, rank_max: p.rank_max,
+      setup_sgf: p.setup_sgf, hint: p.hint, answer: p.answer,
+      verdict: p.verdict, chain_id: chain.id, chain_step: p.chain_step,
+      solved: false,
+    })),
   };
 }
 
@@ -440,7 +503,8 @@ export const mockApi = {
     await randDelay(200, 450);
     const p = MOCK_PROBLEMS.find((x) => x.id === id);
     if (!p) throw Object.assign(new Error('题目不存在'), { status: 404 });
-    return { ...p };
+    const chain = MOCK_CHAINS.find((c) => c.id === p.chain_id);
+    return { ...p, chain_name: chain ? chain.name : null };
   },
 
   async attempt(problemId, coord) {
@@ -496,6 +560,31 @@ export const mockApi = {
       answer: 'D4',
       setup_sgf: '(;GM[1]FF[4]SZ[9]AB[cb][cc][db][dc])',
       created: true,
+    };
+  },
+
+  // ---- 死活题生长链条（v1.7.0）----
+  async chains() {
+    await randDelay(300, 600);
+    return { chains: MOCK_CHAINS.map(chainBrief) };
+  },
+
+  async chainDetail(chainId) {
+    await randDelay(300, 600);
+    const chain = MOCK_CHAINS.find((c) => c.id === chainId);
+    if (!chain) throw Object.assign(new Error('题链不存在'), { status: 404 });
+    return chainDetail(chain);
+  },
+
+  async growChain(chainId, maxDepth, maxPerLevel) {
+    await randDelay(1200, 2200);
+    const chain = MOCK_CHAINS.find((c) => c.id === chainId);
+    if (!chain) throw Object.assign(new Error('题链不存在'), { status: 404 });
+    // 演示：固定返回「本次新增 1 题、丢弃 2」
+    return {
+      chain_id: chainId, added: 1, discarded: 2,
+      steps: chainProblems(chain).length,
+      problems: [],
     };
   },
 

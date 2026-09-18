@@ -145,6 +145,32 @@ CREATE TABLE IF NOT EXISTS schema_migrations (   -- T0：schema 版本表（迁�
 - 当前版本查询：`db.schema_version()`，经 `GET /api/v1/system/version`
   的 `schema_version` 字段对外展示。
 
+### §3.2 题链表（v1.7.0 追加，迁移 v10/v11）
+
+```sql
+-- v10
+CREATE TABLE IF NOT EXISTS problem_chains (
+    id TEXT PRIMARY KEY,            -- 如 "chain-tuotui"
+    name TEXT NOT NULL,             -- 定式名，如「托退定式」
+    theme TEXT,                     -- life_death / capturing_race / mixed
+    root_sgf TEXT NOT NULL,         -- 定式起点 SGF（含全部手顺）
+    seed_sgf TEXT,                  -- 定式完成棋形 SGF（摆子局，可空=自动从 root_sgf 重放裁剪）
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT
+);
+-- v11
+ALTER TABLE problems ADD COLUMN chain_id TEXT;    -- 所属链（NULL=不在链上）
+ALTER TABLE problems ADD COLUMN chain_step INTEGER;  -- 链内步序（第 n 变）
+```
+
+- 题链数据流：`data/chains/*.sgf`（定式种子，根节点 `C[...]` 写定式名、
+  `RE[...]` 写主题、`GC[...]` 写说明）→ `scripts/seed_chains.py` 幂等注册到
+  `problem_chains` → `POST /api/v1/problems/chains/{id}/grow` 长出题目
+  （`problems.source='chain'`，按 `chain_step` 排序即学习顺序）。
+- `chain_step` 从 1 起；链上第 n 题的题面可由第 n-1 题的「正解 + 对手应手」
+  重放得到，完整手顺记录在该题 `branches.chain.moves`。
+
 ---
 
 ## 4. REST API 契约
@@ -292,6 +318,54 @@ verify_position(
   启动加载模型约 1 分钟，窗口3 应把多题验证合并成更少的调用批次）；
 - 底层胜率视角为 `reportAnalysisWinratesAs = SIDETOMOVE`（见
   `engine/analysis_example.cfg`），已换算为候选方视角返回。
+
+**§4.3 附：死活题生长链条（Growth Chains，v1.7.0 追加）**
+
+```
+GET  /api/v1/problems/chains
+  出: { "chains": [ { "id": "chain-tuotui", "name": "托退定式",
+        "theme": "mixed", "description": "……", "status": "active",
+        "problems_count": 3, "themes": ["life_death","capturing_race"],
+        "created_at": "2026-09-18T10:00:00+00:00" } ] }
+
+GET  /api/v1/problems/chains/{chain_id}
+  出: { "chain": { …同上… }, "root_sgf": "(;GM[1]…)", "problems": [
+        { "id": "p1a2…", "theme": "life_death", "goal": "做活",
+          "rank_min": -7, "rank_max": -3, "setup_sgf": "(;GM[1]FF[4]…SZ[19]…)",
+          "hint": "黑先，左下的棋形处在生死关口……", "answer": "D5",
+          "verdict": "D5 是正解（黑方胜率 97%）……",
+          "chain_id": "chain-tuotui", "chain_step": 1, "solved": false } ] }
+      # problems 按 chain_step 升序（即学习顺序）；404 链不存在
+
+POST /api/v1/problems/chains/{chain_id}/grow
+  入: { "max_depth": 3, "max_per_level": 3, "profile": null }
+  出: { "chain_id": "chain-tuotui", "added": 3, "discarded": 4, "steps": 3,
+        "problems": [ …同上 ChainProblemBrief… ] }
+      # added=本次新入库题数（重复 grow 幂等为 0）、discarded=验题未过/超框丢弃数；
+      # 同步接口（引擎单进程，已有生长任务在跑时 409）；404 链不存在 / 422 SGF 无法重放
+```
+
+- 生长流程：定式 `root_sgf` 重放 → 局部裁剪（包围盒外扩 1 格、保留完整棋串，
+  超 9×9 丢弃）→ 候选枚举（局部空邻点 + 角部要点 + pass）→ 验题 → 入库
+  （`source='chain'`、`chain_step` 写步序）→ 递归到 `max_depth` 层。
+- **验题口径**：复用 `verify_position`，档位取 `problems.verify_profile`
+  （死活/对杀 fine），并以 `allow_moves`（`branches.allow_moves`，题面包围盒
+  外扩 2 格，同古典题 v0.9.8 口径）局部聚焦——19 路摆子局在空棋盘上全盘搜索
+  时一选常是局外大场、胜率被子力朝向主导。`verify_position` 因此新增**可选**
+  参数 `allow_moves: list[str] | None = None`（追加、向后兼容，缺省全盘）。
+- **合格线**：正解胜率 > `problems.chain_answer_min_winrate`（默认 0.95）、
+  次优 < `chain_second_max_winrate`（默认 0.3）、死活/对杀另需 pass 后胜率 <
+  `problems.urgency_max_winrate`（默认 0.3）。
+- **实测提示（重要）**：19 路定式终局是两分局面，用上述契约阈值实测 10 条
+  定式链首轮 grow 均产出 0 题（定式局面没有生死攸关的棋串；摆子局在空棋盘上
+  的胜负由「谁朝向空旷盘面」决定）。想要链上出题，二选一：①把
+  `chain_answer_min_winrate`/`chain_second_max_winrate` 放宽到 0.80/0.35 量级；
+  ②把种子 SGF 换成**局面本身带生死**的定式片段（角上大龙未活/对杀），
+  此时契约阈值即可达标。详见 `backend/services/problems/chains.py` 模块注释。
+- 判题复用既有 `POST /api/v1/problems/{id}/attempt`：链上题 `branches.allow_moves`
+  非空时，错误答案的补查沿用同一局部口径，保证反馈里的胜率与 `branches` 一套尺度。
+- 题面性质：`setup_sgf` 为 19 路摆子局（AB/AW，白先前置 `;B[tt]` 修奇偶），
+  包围盒 ≤ 9×9；题 id = `sha256(theme|setup_sgf)[:16]`（与 generate 同方案，幂等）。
 
 ### 4.4 系统（窗口0/4）
 
@@ -444,6 +518,18 @@ budget: { token_limit_month: 30 }      # 元
 秒级，不触发 kernel 编译），失败回退 CPU。探测结果幂等写入
 `katago.detected_backend`（backend 保持 auto；手动指定时不写）；进程级缓存，
 不每次请求重探测。`POST /system/engine/restart` 的 backend 参数仅临时生效。
+
+**§5.1 题链生长可选配置（v1.7.0 追加，全部有默认值，可不写）**：
+
+```yaml
+problems:
+  chain_crop_pad: 1               # 题面裁剪：定式区域包围盒外扩格数
+  chain_max_bbox: 9               # 题面最大包围盒（超框丢弃该分支）
+  chain_region_pad: 2             # 验题局部聚焦区域 = 题面包围盒外扩格数
+  chain_answer_min_winrate: 0.95  # 合格线：正解胜率下限（契约值）
+  chain_second_max_winrate: 0.3   # 合格线：次优胜率上限（契约值）
+  chain_target_rank: -5           # 链上题目标级位中心（难度分级用）
+```
 
 ---
 

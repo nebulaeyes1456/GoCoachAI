@@ -126,7 +126,8 @@ def build_candidates(
 # ---------------------------------------------------------------------------
 
 
-def _result_dict(r: VerifyResult) -> dict:
+def result_dict(r: VerifyResult) -> dict:
+    """VerifyResult → branches JSON 里的候选结构（题链 chains.py 共用）。"""
     return {
         "coord": r.coord,
         "winrate": r.winrate,
@@ -143,6 +144,7 @@ def verify_candidates(
     candidates: list[str],
     profile: str,
     urgent_max_winrate: float,
+    allow_moves: Optional[list[str]] = None,
 ) -> tuple[Optional[VerifyResult], Optional[VerifyResult], list[VerifyResult], bool]:
     """一次 verify_position 调用验证全部候选点。
 
@@ -150,8 +152,16 @@ def verify_candidates(
     - best / second：去掉 pass 与 error 后胜率最高/次高；
     - pass_ok：是否满足紧迫性条件（无 pass 候选时为 True，
       即非死活/对杀题不检验紧迫性）。
+    ``allow_moves``（v1.7.0 追加，可选）：局部聚焦坐标白名单，透传给
+    verify_position（题链生长用，见 chains.py）；缺省 None = 全盘搜索，
+    此时不传该参数（保持既有调用方/测试替身的签名兼容）。
     """
-    results = verify_position(setup_sgf, candidates, profile=profile)
+    if allow_moves:
+        results = verify_position(
+            setup_sgf, candidates, profile=profile, allow_moves=allow_moves
+        )
+    else:
+        results = verify_position(setup_sgf, candidates, profile=profile)
     valid = [
         r for r in results
         if r.error is None and r.coord != "pass" and r.winrate is not None
@@ -187,8 +197,8 @@ def _problem_row(
     _, rank_min, rank_max = utils.difficulty_from_gap(gap, target_rank)
     branches = {
         "solver": solver,
-        "answer": _result_dict(best),
-        "candidates": [_result_dict(r) for r in results],
+        "answer": result_dict(best),
+        "candidates": [result_dict(r) for r in results],
         "profile": profile,
         "verified_at": store.utcnow(),
     }

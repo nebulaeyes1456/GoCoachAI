@@ -17,6 +17,7 @@
                     candidate_coords: list[str],      # 界面坐标，如 ["D15","E16"]
                     profile: str = "standard",
                     max_visits: int | None = None,
+                    allow_moves: list[str] | None = None,  # v1.7.0 追加：局部聚焦
                     ) -> list[VerifyResult]
 """
 
@@ -50,11 +51,17 @@ def verify_position(
     profile: str = "standard",
     max_visits: Optional[int] = None,
     timeout: float = 600.0,
+    allow_moves: Optional[list[str]] = None,
 ) -> list[VerifyResult]:
     """对候选点列表逐个搜索验证，返回每个候选点的胜率与 PV。
 
     候选点逐一提交（引擎内部 numAnalysisThreads 并行度由 cfg 决定，
     这里单次只查一个局面，线程安全且顺序可预测）。
+
+    ``allow_moves``（v1.7.0 追加，可选）：局部聚焦坐标白名单，非空时以
+    ``allowMoves`` 限制双方搜索范围（口径同古典题验题 v0.9.8：题面包围盒
+    外扩 2 格）。19 路角部摆子局在空棋盘上全盘搜索时，一选常是局外大场、
+    且胜率被子力多寡主导——局部聚焦后胜率才反映局部攻杀的成败。
     """
     if not candidate_coords:
         return []
@@ -76,6 +83,13 @@ def verify_position(
             req["moves"] = moves
             if max_visits:
                 req["maxVisits"] = max_visits
+            if allow_moves:
+                req["allowMoves"] = [
+                    {"player": "B", "moves": list(allow_moves),
+                     "untilDepth": 100},
+                    {"player": "W", "moves": list(allow_moves),
+                     "untilDepth": 100},
+                ]
             try:
                 resp = engine.query(req, timeout=timeout)
             except EngineError as exc:

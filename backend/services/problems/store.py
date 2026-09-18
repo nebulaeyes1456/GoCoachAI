@@ -21,7 +21,8 @@ from ...common import db as db_mod
 
 PROBLEM_COLUMNS = (
     "id, source, review_id, theme, rank_min, rank_max, setup_sgf,"
-    " answer, branches, verdict, hint, explanation, status, goal, created_at"
+    " answer, branches, verdict, hint, explanation, status, goal,"
+    " chain_id, chain_step, created_at"
 )
 
 
@@ -46,6 +47,8 @@ def _row_to_problem(row: Any) -> dict:
         "hint": row["hint"],
         "explanation": row["explanation"],
         "status": row["status"],
+        "chain_id": row["chain_id"],
+        "chain_step": row["chain_step"],
         "created_at": row["created_at"],
     }
 
@@ -54,6 +57,8 @@ def insert_problem(problem: dict, db_path: str | Path | None = None) -> bool:
     """插入一道题（INSERT OR IGNORE，主键冲突幂等跳过）。
 
     ``problem`` 需含 §3 problems 全部非空字段；缺少 created_at 时自动补。
+    ``chain_id`` / ``chain_step``（v11 新增，题链）与 ``goal``（目标分类）
+    可缺省（None = 不在链上 / 未分类）。
     返回是否真正插入（False = 已存在同 id 题目）。
     """
     conn = db_mod.connect(db_path)
@@ -63,8 +68,8 @@ def insert_problem(problem: dict, db_path: str | Path | None = None) -> bool:
             INSERT OR IGNORE INTO problems
                 (id, source, review_id, theme, rank_min, rank_max,
                  setup_sgf, answer, branches, verdict, hint, explanation,
-                 status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, goal, chain_id, chain_step, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 problem["id"],
@@ -80,6 +85,9 @@ def insert_problem(problem: dict, db_path: str | Path | None = None) -> bool:
                 problem.get("hint"),
                 problem.get("explanation"),
                 problem.get("status") or "active",
+                problem.get("goal"),
+                problem.get("chain_id"),
+                problem.get("chain_step"),
                 problem.get("created_at") or utcnow(),
             ),
         )
@@ -187,6 +195,25 @@ def list_problems(
     finally:
         conn.close()
     return [_row_to_problem(r) for r in rows], total
+
+
+def list_chain_problems(
+    chain_id: str, db_path: str | Path | None = None
+) -> list[dict]:
+    """某条链上的题目，按 chain_step 升序（同 step 按 id 稳定排序）。
+
+    chain_step 为 NULL 的题（理论上不会出现在链上）排最后。
+    """
+    conn = db_mod.connect(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT {PROBLEM_COLUMNS} FROM problems WHERE chain_id=?"
+            " ORDER BY COALESCE(chain_step, 9999) ASC, id ASC",
+            (chain_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [_row_to_problem(r) for r in rows]
 
 
 def add_attempt(

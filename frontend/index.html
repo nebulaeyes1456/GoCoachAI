@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light">
   <title>弈友 v2</title>
-  <link rel="stylesheet" href="css/style.css?v=20260912a">
+  <link rel="stylesheet" href="css/style.css?v=20260918a">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -352,6 +352,8 @@
                 <option value="hardest">从难到易</option>
                 <option value="">最新优先</option>
               </select>
+              <button class="btn btn-sm" id="btn-open-chains" @click="openChains"
+                title="从定式出发的死活题链">🔗 题链</button>
               <span class="muted small" v-if="practiceList.length">共 {{ practiceTotal }} 题</span>
             </div>
             <div class="goc-loading" v-if="practiceLoading" id="practice-loading">题库加载中…</div>
@@ -366,6 +368,8 @@
                 <div>
                   <span class="theme-tag">{{ themeName(p.theme) }}</span>
                   <span class="problem-rank muted small">{{ rankLabel(p.rank_min, p.rank_max) }}</span>
+                  <span class="badge badge-chain" v-if="p.chain_id"
+                    :data-chain-id="p.chain_id">题链 · 第 {{ p.chain_step }} 变</span>
                 </div>
                 <div class="problem-hint muted small">{{ p.hint || '（无提示）' }}</div>
               </div>
@@ -382,16 +386,104 @@
         </div>
       </div>
 
+      <!-- 模式一之二：题链列表（v1.7.0） -->
+      <div v-else-if="practiceMode === 'chains'" class="practice-grid practice-list-only">
+        <div class="col-library">
+          <div class="panel">
+            <div class="panel-title">题链
+              <button class="btn btn-sm" id="btn-chains-back" @click="backToPracticeList">← 返回题库</button>
+              <span class="muted small">从定式出发，沿脉络练死活</span>
+            </div>
+            <div class="goc-loading" v-if="chainsLoading" id="chains-loading">题链加载中…</div>
+            <div class="goc-error" v-else-if="chainsError" id="chains-error">
+              {{ chainsError }}
+              <div style="margin-top:.3rem"><button class="btn btn-sm" @click="loadChains">重试</button></div>
+            </div>
+            <div class="chain-cards" v-else-if="practiceChains.length">
+              <div v-for="c in practiceChains" :key="c.id" class="chain-card"
+                :data-chain-id="c.id" @click="openChain(c.id)">
+                <div class="chain-card-head">
+                  <span class="chain-card-name">{{ c.name }}</span>
+                  <span class="badge badge-theme">{{ c.themes && c.themes.length ? chainThemesText(c.themes) : chainThemeName(c.theme) }}</span>
+                  <span class="muted small">{{ c.problems_count }} 题</span>
+                </div>
+                <div class="chain-card-desc">{{ c.description || '（暂无说明）' }}</div>
+                <div class="chain-card-meta">
+                  {{ c.problems_count ? '沿链条连续练习：从第 1 变一路做到最后一变' : '尚未生长出题目（可在后端执行 grow）' }}
+                </div>
+              </div>
+            </div>
+            <div class="goc-empty" v-else id="chains-empty">
+              还没有题链（把定式 SGF 放进 data/chains/ 后执行 scripts/seed_chains.py）
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 模式一之三：链详情（竖向时间线） -->
+      <div v-else-if="practiceMode === 'chain'" class="practice-grid practice-list-only">
+        <div class="col-library">
+          <div class="panel">
+            <div class="panel-title">{{ practiceChain ? practiceChain.chain.name : '题链' }}
+              <button class="btn btn-sm" id="btn-chain-detail-back" @click="openChains">← 返回题链</button>
+              <button class="btn btn-primary btn-sm" id="btn-chain-run"
+                v-if="practiceChain && practiceChain.problems.length"
+                @click="startChainPractice">▶ 连续练习</button>
+              <span class="muted small" v-if="practiceChain">
+                共 {{ practiceChain.problems.length }} 变
+              </span>
+            </div>
+            <div class="goc-loading" v-if="chainDetailLoading" id="chain-detail-loading">链详情加载中…</div>
+            <div class="goc-error" v-else-if="chainDetailError" id="chain-detail-error">{{ chainDetailError }}</div>
+            <template v-else-if="practiceChain">
+              <div class="muted small" id="chain-detail-desc">{{ practiceChain.chain.description }}</div>
+              <div class="chain-timeline" v-if="practiceChain.problems.length">
+                <div v-for="(p, i) in practiceChain.problems" :key="p.id" class="chain-step"
+                  :data-chain-step="p.chain_step">
+                  <div class="chain-step-dot">{{ p.chain_step }}</div>
+                  <div class="chain-step-body">
+                    <div class="chain-step-title">
+                      <strong>第 {{ p.chain_step }} 变</strong>
+                      <span class="badge badge-theme">{{ themeName(p.theme) }}</span>
+                      <span class="badge badge-ok" v-if="p.goal">{{ p.goal }}</span>
+                      <span class="badge badge-ok" v-if="p.solved">已答对</span>
+                    </div>
+                    <div class="chain-step-hint">{{ p.hint || '（无提示）' }}</div>
+                    <div class="chain-step-foot">
+                      <span>{{ rankLabel(p.rank_min, p.rank_max) }}</span>
+                      <span v-if="i === 0">· 定式终局</span>
+                      <span v-else>· 上一变正解之后</span>
+                      <button class="btn btn-sm" :data-chain-do="p.id"
+                        @click="selectChainProblem(i)">做这道</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="goc-empty" v-else id="chain-detail-empty">
+                这条链还没有题目（在后端执行 POST /api/v1/problems/chains/{{ practiceChain.chain.id }}/grow 生长）
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
       <!-- 模式二：做题子页面 -->
       <div v-else class="solve-page">
         <div class="panel">
           <div class="panel-title">试下
-            <button class="btn btn-sm" id="btn-practice-back" @click="backToPracticeList">← 返回题库</button>
+            <button class="btn btn-sm" id="btn-practice-back" @click="backFromSolve">
+              {{ practiceChainId ? '← 返回题链' : '← 返回题库' }}
+            </button>
             <span class="muted small" v-if="practiceProblem">
               {{ themeName(practiceProblem.theme) }} · {{ rankLabel(practiceProblem.rank_min, practiceProblem.rank_max) }}
             </span>
             <span class="muted small" v-if="practiceProblem" id="practice-solver">
               轮到{{ practiceSolver === 'W' ? '白' : '黑' }}方
+            </span>
+            <span class="badge badge-chain" v-if="practiceProblem && practiceProblem.chain_id"
+              id="practice-chain-badge" :data-chain-id="practiceProblem.chain_id">
+              {{ (practiceProblem.chain_name || chainNameById(practiceProblem.chain_id) || '题链') }}
+              · 第 {{ practiceProblem.chain_step }} 变
             </span>
             <span class="badge badge-ok" v-if="attemptResult && attemptResult.solved" id="practice-solved">已答对</span>
           </div>
@@ -884,7 +976,7 @@
 <script src="assets/wgo/kifu.js?v=231"></script>
 <script src="assets/wgo/sgfparser.js?v=231"></script>
 <!-- 页面脚本（ESM，内部引入本地 Vue ESM 构建） -->
-<script type="module" src="js/app.js?v=20260912a"></script>
+<script type="module" src="js/app.js?v=20260918a"></script>
 </body>
 </html>
 

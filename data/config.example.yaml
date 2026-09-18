@@ -43,6 +43,13 @@ problems:
     middle: standard
   urgency_max_winrate: 0.3
   endgame_move_fraction: 0.8
+  # 题链生长（v1.7.0，可选；默认即契约阈值）
+  chain_crop_pad: 1
+  chain_max_bbox: 9
+  chain_region_pad: 2
+  chain_answer_min_winrate: 0.95
+  chain_second_max_winrate: 0.3
+  chain_target_rank: -5
   extract_signal_threshold: 0.06
   endgame_swing_threshold: 0.12
   extract_review_timeout: 900

@@ -25,6 +25,12 @@ out variations **in sync with the commentary** on the board, and helps you train
   explanations after you solve them.
 - **Capture any position as a problem** — while reviewing a game, one click turns the
   current local position into a verified practice problem.
+- **Growth chains (题链)** — the library grows from *sources* and *lineages*, not just a
+  flat pile of problems: pick a joseki (attach-and-retreat, double wing, small avalanche,
+  3-3 invasion …) and practice the life-and-death and capturing-race problems that grow
+  out of it, step by step, so you can see **where each tsumego comes from and why it
+  appears**. Chain steps replay from the previous step's answer, and one click starts a
+  continuous practice run along the chain.
 - **Growth profiles (成长视图)** — create one profile per player, archive reviewed games
   or import external SGF files into a per-player game library, and get a computed
   **skill portrait**: per-phase average loss, weakness ranking, estimated rank, and

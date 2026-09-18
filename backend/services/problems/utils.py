@@ -5,6 +5,8 @@
 - 棋串（连通块）与气计算；
 - 局部裁剪：以失误手为中心、半径 ``crop_radius`` 的方框，保留与框内
   相交的**完整棋串**（任务书：半径 3~4 路，保留完整棋串）；
+  ``crop_bbox`` 是公共实现（包围盒裁剪），``crop_stones`` 与题链生长
+  的区域裁剪都基于它，避免各写一份「保留完整棋串」的逻辑；
 - 题面 SGF 构造：AB/AW 摆子 + 奇偶修正 pass（让 verify_position 正确
   识别行棋方，见 generator 注释）；
 - 主题归类 / 难度分级 / 提示与结论规则模板 / 默认级位区间。
@@ -71,15 +73,15 @@ def neighbors(x: int, y: int, size: int) -> list[tuple[int, int]]:
 Position = dict[tuple[int, int], str]  # (x, y) -> "B"/"W"
 
 
-def replay_position(
-    moves: Iterable[tuple[str, str]], size: int
+def apply_moves(
+    stones: Position,
+    moves: Iterable[tuple[str, str]],
+    size: int,
 ) -> Position:
-    """按主线着法重放局面（含提子；自杀着法抛 ValueError）。
+    """在既有局面上继续落子（含提子；自杀着法抛 ValueError），返回同一字典。
 
-    忽略打劫禁令：打劫提回会得到"当前局面 + 对方刚提子"的近似图，
-    对半径 4 路的局部裁剪影响可忽略（生成器的题面以此为代价换取简单性）。
+    摆子局（AB/AW 摆子 + 手顺）与整盘重放共用这一份落子逻辑。
     """
-    stones: Position = {}
     for color, coord in moves:
         if not coord or coord.strip().upper() == "PASS":
             continue
@@ -102,6 +104,17 @@ def replay_position(
                 stones.pop((x, y), None)
                 raise ValueError(f"自杀着法: {coord}")
     return stones
+
+
+def replay_position(
+    moves: Iterable[tuple[str, str]], size: int
+) -> Position:
+    """按主线着法重放局面（含提子；自杀着法抛 ValueError）。
+
+    忽略打劫禁令：打劫提回会得到"当前局面 + 对方刚提子"的近似图，
+    对半径 4 路的局部裁剪影响可忽略（生成器的题面以此为代价换取简单性）。
+    """
+    return apply_moves({}, moves, size)
 
 
 def group_at(
@@ -152,17 +165,32 @@ def all_groups(stones: Position, size: int) -> list[set[tuple[int, int]]]:
 # ---------------------------------------------------------------------------
 
 
-def crop_stones(
+def bbox_of(points: Iterable[tuple[int, int]]) -> tuple[int, int, int, int]:
+    """点集的包围盒 (x0, y0, x1, y1)（含端点）；空集抛 ValueError。"""
+    pts = list(points)
+    if not pts:
+        raise ValueError("空点集没有包围盒")
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def crop_bbox(
     position: Position,
-    center_xy: tuple[int, int],
-    radius: int,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
     size: int,
 ) -> Position:
-    """以 center 为中心、Chebyshev 半径 radius 裁剪；与框相交的棋串整体保留。"""
-    cx, cy = center_xy
+    """按包围盒 [x0..x1] × [y0..y1]（含端点）裁剪；与框相交的棋串整体保留。
+
+    公共裁剪函数（generator 的中心裁剪与 chains 的定式区域裁剪共用），
+    边界自动收敛到棋盘内；坐标顺序颠倒（x0 > x1）时返回空。
+    """
     kept: Position = {}
-    for x in range(max(0, cx - radius), min(size - 1, cx + radius) + 1):
-        for y in range(max(0, cy - radius), min(size - 1, cy + radius) + 1):
+    for x in range(max(0, x0), min(size - 1, x1) + 1):
+        for y in range(max(0, y0), min(size - 1, y1) + 1):
             color = position.get((x, y))
             if color is not None:
                 kept[(x, y)] = color
@@ -172,6 +200,19 @@ def crop_stones(
             for pt in group:
                 kept[pt] = position[pt]
     return kept
+
+
+def crop_stones(
+    position: Position,
+    center_xy: tuple[int, int],
+    radius: int,
+    size: int,
+) -> Position:
+    """以 center 为中心、Chebyshev 半径 radius 裁剪；与框相交的棋串整体保留。"""
+    cx, cy = center_xy
+    return crop_bbox(
+        position, cx - radius, cy - radius, cx + radius, cy + radius, size
+    )
 
 
 def setup_sgf(

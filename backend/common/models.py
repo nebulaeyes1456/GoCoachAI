@@ -238,6 +238,9 @@ class ProblemDetailResponse(BaseModel):
     hint: Optional[str] = None
     explanation: Optional[str] = None
     goal: Optional[str] = None  # 目标分类：做活/杀棋/对杀/逃棋筋/吃棋筋/收官最大/中盘要点
+    chain_id: Optional[str] = None    # 所属题链（v1.7.0；非空时前端显示来源徽标）
+    chain_step: Optional[int] = None  # 链内步序（第 n 变）
+    chain_name: Optional[str] = None  # 链名（路由层 join 填充）
     status: str = "active"
 
 
@@ -288,11 +291,72 @@ class LibraryProblemBrief(BaseModel):
     setup_sgf: str
     hint: Optional[str] = None
     goal: Optional[str] = None
+    chain_id: Optional[str] = None    # v1.7.0：题链来源（非空时列表项显示徽标）
+    chain_step: Optional[int] = None
 
 
 class ProblemLibraryResponse(BaseModel):
     problems: list[LibraryProblemBrief] = Field(default_factory=list)
     total: int = 0
+
+
+# ---------------------------------------------------------------------------
+# §4.3 附：死活题生长链条（v1.7.0，Growth Chains）
+# ---------------------------------------------------------------------------
+
+
+class ChainBrief(BaseModel):
+    """链列表条目（含题数与实际主题）。"""
+
+    id: str
+    name: str
+    theme: Optional[str] = None          # life_death / capturing_race / mixed
+    description: Optional[str] = None
+    status: str = "draft"                # draft / active
+    problems_count: int = 0
+    themes: list[str] = Field(default_factory=list)  # 链上题实际涉及的主题
+    created_at: Optional[str] = None
+
+
+class ChainListResponse(BaseModel):
+    chains: list[ChainBrief] = Field(default_factory=list)
+
+
+class ChainProblemBrief(BaseModel):
+    """链上的一道题（按 chain_step 排序即为学习顺序）。"""
+
+    id: str
+    theme: str
+    goal: Optional[str] = None
+    rank_min: Optional[int] = None
+    rank_max: Optional[int] = None
+    setup_sgf: str
+    hint: Optional[str] = None
+    answer: str = ""
+    verdict: Optional[str] = None
+    chain_id: str = ""
+    chain_step: Optional[int] = None
+    solved: bool = False                 # 是否已有答对记录
+
+
+class ChainDetailResponse(BaseModel):
+    chain: ChainBrief
+    root_sgf: str = ""
+    problems: list[ChainProblemBrief] = Field(default_factory=list)
+
+
+class ChainGrowRequest(BaseModel):
+    max_depth: int = 3                   # 从定式终局算起的层数
+    max_per_level: int = 3               # 每层最多尝试的种子数
+    profile: Optional[str] = None        # 验题档位；缺省按 config verify_profile
+
+
+class ChainGrowResponse(BaseModel):
+    chain_id: str
+    added: int = 0                       # 本次新入库题数（重复 grow 为 0）
+    discarded: int = 0                   # 验题未通过/局部超框的丢弃次数
+    steps: int = 0                       # 生长后链上末尾步序
+    problems: list[ChainProblemBrief] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

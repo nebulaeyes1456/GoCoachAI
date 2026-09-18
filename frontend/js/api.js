@@ -3,7 +3,7 @@
 // 若页面本身由后端挂在同源（桌面壳/uvicorn 直开），则用相对路径更稳（兼容 localhost 访问）。
 // 数据源开关：Mock（默认）/ 真实，见 initSource/setSource。
 
-import { mockApi, MOCK_SAMPLE_SGF } from './mock.js?v=20260912a';
+import { mockApi, MOCK_SAMPLE_SGF } from './mock.js?v=20260918a';
 
 const ABS_BASE = 'http://127.0.0.1:8765';
 
@@ -113,6 +113,15 @@ const realApi = {
     realFetch('POST', `/api/v1/problems/${problemId}/attempt`, { coord }),
   problemExplain: (problemId) =>
     realFetch('POST', `/api/v1/problems/${problemId}/explain`, {}),
+  // ---- 死活题生长链条（v1.7.0）----
+  chains: () => realFetch('GET', '/api/v1/problems/chains'),
+  chainDetail: (chainId) =>
+    realFetch('GET', `/api/v1/problems/chains/${chainId}`),
+  growChain: (chainId, maxDepth, maxPerLevel) =>
+    realFetch('POST', `/api/v1/problems/chains/${chainId}/grow`, {
+      max_depth: maxDepth === undefined ? 3 : maxDepth,
+      max_per_level: maxPerLevel === undefined ? 3 : maxPerLevel,
+    }),
   extractProblem: (reviewId, moveNumber) =>
     realFetch('POST', '/api/v1/problems/extract_from_review',
       { review_id: reviewId, move_number: moveNumber }),
@@ -187,6 +196,10 @@ export const api = {
   problem: (id) => dispatch('problem', id),
   attempt: (problemId, coord) => dispatch('attempt', problemId, coord),
   problemExplain: (problemId) => dispatch('problemExplain', problemId),
+  chains: () => dispatch('chains'),
+  chainDetail: (chainId) => dispatch('chainDetail', chainId),
+  growChain: (chainId, maxDepth, maxPerLevel) =>
+    dispatch('growChain', chainId, maxDepth, maxPerLevel),
   extractProblem: (reviewId, moveNumber) =>
     dispatch('extractProblem', reviewId, moveNumber),
   createProfile: (name, note) => dispatch('createProfile', name, note),

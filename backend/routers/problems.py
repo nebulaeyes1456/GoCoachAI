@@ -21,6 +21,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..common.models import (
+    ChainBrief,
+    ChainDetailResponse,
+    ChainGrowRequest,
+    ChainGrowResponse,
+    ChainListResponse,
+    ChainProblemBrief,
     ExtractFromReviewRequest,
     ExtractFromReviewResponse,
     GeneratedProblemBrief,
@@ -35,12 +41,22 @@ from ..common.models import (
     ProblemGenerateResponse,
     ProblemLibraryResponse,
 )
-from ..services.problems import checker, explainer, extractor, generator, store
+from ..services.problems import (
+    chains,
+    checker,
+    explainer,
+    extractor,
+    generator,
+    store,
+)
 
 router = APIRouter(prefix="/api/v1/problems", tags=["problems"])
 
 # 提取任务互斥锁：引擎单进程，同一时间只跑一个提取任务（占用时返回 409）
 _extract_lock = threading.Lock()
+
+# 生长任务互斥锁：引擎单进程，同一条链/不同链的 grow 不并发
+_grow_lock = threading.Lock()
 
 
 @router.post("/generate", response_model=ProblemGenerateResponse)
@@ -102,6 +118,85 @@ def extract(req: ProblemExtractRequest) -> ProblemExtractResponse:
     )
 
 
+@router.get("/chains", response_model=ChainListResponse)
+def list_chains() -> ChainListResponse:
+    """定式链列表（v1.7.0）：名称/描述/题数/涉及主题。"""
+    return ChainListResponse(
+        chains=[ChainBrief(**c) for c in chains.list_chains()]
+    )
+
+
+@router.get("/chains/{chain_id}", response_model=ChainDetailResponse)
+def chain_detail(chain_id: str) -> ChainDetailResponse:
+    """链详情：按 chain_step 排序的题目列表（即「第 1 变 → 第 n 变」学习顺序）。"""
+    chain = chains.get_chain(chain_id)
+    if chain is None:
+        raise HTTPException(status_code=404, detail="题链不存在")
+    items = store.list_chain_problems(chain_id)
+    problems = [
+        ChainProblemBrief(
+            id=p["id"],
+            theme=p["theme"],
+            goal=p.get("goal"),
+            rank_min=p.get("rank_min"),
+            rank_max=p.get("rank_max"),
+            setup_sgf=p["setup_sgf"],
+            hint=p.get("hint"),
+            answer=p.get("answer") or "",
+            verdict=p.get("verdict"),
+            chain_id=chain_id,
+            chain_step=p.get("chain_step"),
+            solved=store.has_correct_attempt(p["id"]),
+        )
+        for p in items
+    ]
+    brief = next(
+        (c for c in chains.list_chains() if c["id"] == chain_id), None
+    ) or {
+        "id": chain_id, "name": chain["name"], "theme": chain.get("theme"),
+        "description": chain.get("description"), "status": chain["status"],
+        "problems_count": len(problems), "themes": [],
+        "created_at": chain.get("created_at"),
+    }
+    return ChainDetailResponse(
+        chain=ChainBrief(**brief),
+        root_sgf=chain["root_sgf"],
+        problems=problems,
+    )
+
+
+@router.post("/chains/{chain_id}/grow", response_model=ChainGrowResponse)
+def grow_chain(chain_id: str, req: ChainGrowRequest) -> ChainGrowResponse:
+    """触发生长（同步执行；引擎单进程，占用时返回 409）。
+
+    返回新增题数与丢弃数；同一链重复调用幂等（新增 0 题、步序不变）。
+    """
+    if not _grow_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="已有生长任务在运行，请稍后再试")
+    try:
+        result = chains.grow_chain(
+            chain_id,
+            max_depth=req.max_depth,
+            max_per_level=req.max_per_level,
+            profile=req.profile,
+        )
+    except chains.ChainNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except chains.ChainSgfError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # 引擎启动失败等
+        raise HTTPException(status_code=502, detail=f"链生长失败: {exc}") from exc
+    finally:
+        _grow_lock.release()
+    return ChainGrowResponse(
+        chain_id=result["chain_id"],
+        added=int(result["added"]),
+        discarded=int(result["discarded"]),
+        steps=int(result["steps"]),
+        problems=[ChainProblemBrief(**p) for p in result["problems"]],
+    )
+
+
 @router.get("/library", response_model=ProblemLibraryResponse)
 def library(
     theme: Optional[str] = Query(default=None),
@@ -124,6 +219,10 @@ def detail(problem_id: str) -> ProblemDetailResponse:
     problem = store.get_problem(problem_id)
     if problem is None:
         raise HTTPException(status_code=404, detail="题目不存在")
+    if problem.get("chain_id"):
+        chain = chains.get_chain(problem["chain_id"])
+        if chain:
+            problem["chain_name"] = chain["name"]
     return ProblemDetailResponse(**problem)
 
 
