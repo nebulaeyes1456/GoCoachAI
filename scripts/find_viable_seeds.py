@@ -109,6 +109,8 @@ def main() -> None:
     ap.add_argument("--dir", default=str(DEFAULT_LIB))
     ap.add_argument("--limit", type=int, default=120, help="抽样题数（0=全部）")
     ap.add_argument("--stride", type=int, default=0, help="抽样步长（默认按 limit 均分）")
+    ap.add_argument("--offset", type=int, default=0,
+                    help="抽样起点偏移（分批跑用，避免与上一批重复）")
     ap.add_argument("--profile", default="fast")
     ap.add_argument("--out", default="", help="把命中题写成链种子 SGF 的目录")
     ap.add_argument("--bar", default="relative",
@@ -123,6 +125,8 @@ def main() -> None:
     if not files:
         print(f"[X] {args.dir} 下没有 SGF")
         return
+    if args.offset:
+        files = files[args.offset:]
     if args.limit and args.limit < len(files):
         stride = args.stride or max(1, len(files) // args.limit)
         files = files[::stride][: args.limit]
