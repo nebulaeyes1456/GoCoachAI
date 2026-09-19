@@ -47,8 +47,15 @@ problems:
   chain_crop_pad: 1
   chain_max_bbox: 9
   chain_region_pad: 2
-  chain_answer_min_winrate: 0.95
-  chain_second_max_winrate: 0.3
+  chain_verify_mode: local_board # local_board（默认：局部裁小棋盘再验）| local_death | winrate
+  chain_board_margin: 2          # local_board：小棋盘余量
+  chain_board_min_size: 5        # local_board：小棋盘最小边长
+  chain_own_min: 0.75            # 局部死活：正解目标区归属下限（正=先手方控住该区）
+  chain_tenuki_min: 0.15         # 局部死活：脱先损失下限（0.15=半紧急，0.4=紧急）
+  chain_death_profile: fast      # 局部死活推演档位
+  chain_death_pv_len: 6          # 局部死活推演走多少手 PV
+  chain_answer_min_winrate: 0.95 # winrate 口径：正解胜率下限（契约值）
+  chain_second_max_winrate: 0.3  # winrate 口径：次优胜率上限（契约值）
   chain_target_rank: -5
   extract_signal_threshold: 0.06
   endgame_swing_threshold: 0.12

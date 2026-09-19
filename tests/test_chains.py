@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import tempfile
@@ -65,6 +66,26 @@ def _fake_verify_candidates(setup_sgf, candidates, profile, urgent_max,
         r.coord == "pass" and (r.winrate or 1.0) < urgent_max for r in results
     )
     return best, second, results, pass_ok
+
+
+def _fake_death_profile(setup_sgf, size, solver, answer, pv, region, target_xy,
+                        profile="fast", pv_len=6, with_tenuki=True):
+    """假局部死活画像。
+
+    正解那次：达成目标（归属 0.92）且不能脱先（损失 0.42，紧急）；
+    次优点那次（``with_tenuki=False``，唯一性检查）：未达成 → 正解唯一。
+    """
+    if not with_tenuki:
+        return {
+            "own_pv": 0.25, "own_after": None, "tenuki_loss": None,
+            "grade": None, "result_type": "未达成", "opp_winrate": 0.6,
+            "answer": answer, "line": [answer],
+        }
+    return {
+        "own_pv": 0.92, "own_after": 0.50, "tenuki_loss": 0.42,
+        "grade": "紧急", "result_type": "净", "opp_winrate": 0.01,
+        "answer": answer, "line": [answer],
+    }
 
 
 class TestChainCrud(unittest.TestCase):
@@ -200,7 +221,9 @@ class TestGrowMocked(unittest.TestCase):
 
     def _grow(self, **kw):
         with mock.patch.object(chains, "verify_candidates",
-                               side_effect=_fake_verify_candidates):
+                               side_effect=_fake_verify_candidates), \
+             mock.patch.object(chains, "local_death_profile",
+                               side_effect=_fake_death_profile):
             return chains.grow_chain("chain-t", db_path=self.db, **kw)
 
     def test_grow_creates_steps_and_metadata(self):
@@ -291,6 +314,123 @@ class TestGrowMocked(unittest.TestCase):
     def test_grow_unknown_chain(self):
         with self.assertRaises(chains.ChainNotFoundError):
             chains.grow_chain("missing", db_path=self.db)
+
+
+class TestLocalDeathGate(unittest.TestCase):
+    """局部死活口径（chain_verify_mode=local_death，默认）的验收门。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "death.db"
+        db_mod.init_db(self.db)
+        chains.register_chain(
+            {"id": "chain-d", "name": "死活链", "root_sgf": ROOT_SGF}, self.db,
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _grow(self, profile_side_effect=None, theme=None, **kw):
+        kw.setdefault("verify_mode", "local_death")
+        patches = [
+            mock.patch.object(chains, "verify_candidates",
+                              side_effect=_fake_verify_candidates),
+            mock.patch.object(chains, "local_death_profile",
+                              side_effect=profile_side_effect
+                              or _fake_death_profile),
+        ]
+        if theme:   # 紧迫性（脱先损失）只对死活/对杀题生效
+            patches.append(
+                mock.patch.object(utils, "classify_theme", return_value=theme)
+            )
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            return chains.grow_chain("chain-d", db_path=self.db, **kw)
+
+    def test_accepts_when_goal_reached_and_urgent(self):
+        result = self._grow(max_depth=2, theme="life_death")
+        self.assertEqual(result["added"], 2)
+        items = store.list_chain_problems("chain-d", self.db)
+        branches = json.loads(items[0]["branches"])
+        self.assertEqual(branches["local"]["own_pv"], 0.92)
+        self.assertEqual(branches["local"]["grade"], "紧急")
+        # 结论写进 verdict / hint
+        self.assertIn("净活", items[0]["verdict"])
+        self.assertIn("脱先损失", items[0]["verdict"])
+        self.assertIn("目标：", items[0]["hint"])
+
+    def test_rejects_when_goal_not_reached(self):
+        def weak(*a, **kw):
+            prof = _fake_death_profile(*a, **kw)
+            prof["own_pv"] = 0.4          # 目标区没拿下
+            prof["result_type"] = "未达成"
+            return prof
+
+        result = self._grow(profile_side_effect=weak, max_depth=2)
+        self.assertEqual(result["added"], 0)
+        self.assertGreaterEqual(result["discarded"], 1)
+
+    def test_rejects_when_can_tenuki(self):
+        def calm(*a, **kw):
+            prof = _fake_death_profile(*a, **kw)
+            prof["tenuki_loss"] = 0.05    # 可脱先 → 不是死活/对杀题
+            prof["grade"] = "可脱先"
+            return prof
+
+        result = self._grow(profile_side_effect=calm, max_depth=2,
+                            theme="life_death")
+        self.assertEqual(result["added"], 0)
+
+    def test_rejects_when_second_move_also_works(self):
+        """次优点同样达成目标 → 不是唯一急所，丢弃。"""
+        def two_ways(*a, with_tenuki=True, **kw):
+            prof = _fake_death_profile(*a, **kw)
+            if not with_tenuki:           # 次优点那次调用
+                prof["own_pv"] = 0.90     # 换个点也能达成
+            return prof
+
+        result = self._grow(profile_side_effect=two_ways, max_depth=1)
+        self.assertEqual(result["added"], 0)
+
+    def test_goal_text_mapping(self):
+        self.assertEqual(chains.goal_text("做活", "净", "B"), "黑方净活")
+        self.assertEqual(chains.goal_text("杀棋", "劫/双活", "W"), "白方劫杀")
+        self.assertEqual(chains.goal_text("对杀", "净", "B"), "黑方净杀")
+        self.assertEqual(chains.goal_text("做活", "未达成", "B"), "")
+        self.assertEqual(chains.goal_text("做活", None, "B"), "")
+
+    def test_seq_with_parity(self):
+        """题面奇偶决定行棋方：白先题面（含 B[tt]）之后轮到白。"""
+        sgf_w = "(;GM[1]FF[4]CA[UTF-8]SZ[9]AB[cc]AW[dd];B[tt])"
+        seq = chains._seq_with(sgf_w, ["E5", "F5"])
+        self.assertEqual(seq[0], ["B", "pass"])
+        self.assertEqual(seq[1], ["W", "E5"])
+        self.assertEqual(seq[2], ["B", "F5"])
+
+
+class TestGrowMockedHelpers(unittest.TestCase):
+    """生长流程的边界（沿用 TestGrowMocked 的假验题）。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "grow2.db"
+        db_mod.init_db(self.db)
+        chains.register_chain(
+            {"id": "chain-t", "name": "测试定式", "theme": "mixed",
+             "root_sgf": ROOT_SGF},
+            self.db,
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _grow(self, **kw):
+        with mock.patch.object(chains, "verify_candidates",
+                               side_effect=_fake_verify_candidates), \
+             mock.patch.object(chains, "local_death_profile",
+                               side_effect=_fake_death_profile):
+            return chains.grow_chain("chain-t", db_path=self.db, **kw)
 
     def test_grow_bad_sgf_raises(self):
         chains.register_chain(

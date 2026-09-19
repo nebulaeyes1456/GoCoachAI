@@ -42,7 +42,7 @@ from ..services.engine import backend as engine_backend
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
 # 版本号（契约 §4.4）
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 BACKUP_DIR = settings.BASE_DIR / "data" / "backups"
 

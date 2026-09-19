@@ -35,39 +35,42 @@
 幂等性：题 id 由题面 SGF 哈希决定，重复 grow 只会命中 ``INSERT OR IGNORE``
 （返回 created=False），第二次新增 0 题、既有 chain_step 不变。
 
-**19 路定式局面的实测口径（v1.7.0 交付实测，务必先读）**：
+**19 路局面的验收口径（v1.7.1 实测，务必先读）**：
 
-任务书要求「正解 > 0.95 且次优 < 0.3」（战术题合格线）。在 19 路棋盘上
-用真实引擎实测（10 条定式链 × 10~12 候选点 × 逐层验题）：
-定式终局局面是**两分**局面——双方都没有「生死攸关」的棋串，且摆子局在
-空棋盘上的评估被「谁的子朝向空旷盘面」主导（实测：17 子角部实空只有 3 目
-时，KataGo 判该方落后 26 目）。因此 19 路定式局面几乎不可能同时满足
-「正解 > 0.95 且次优 < 0.3 且 pass < 0.3」——该口径是为 9 路整盘复盘题
-（局部即全局）与古典死活题（allowMoves 局部聚焦）设计的。
+任务书最初要求「正解胜率 > 0.95 且次优 < 0.3」。真实引擎实测（10 条定式链
+× 10~12 候选点 × 逐层验题）：19 路**整盘**摆子局的胜负被「谁朝向空旷盘面」
+主导（例：17 子角部实空只有 3 目时 KataGo 判落后 26 目），局部一手摆动不了
+整盘胜率 → 全部丢光。为此提供三种口径（``chain_verify_mode``）：
 
-为此本模块：
+- ``local_board``（默认）：把局部棋形裁成**小棋盘**（保留与角部两条边线的
+  距离）再按契约阈值验题——小棋盘上局部攻杀就是全局内容，与 app 里 9 路
+  整盘复盘题（正解胜率 0.99）同一尺度；
+- ``local_death``：局部死活画像（与 v1.5.0 深度讲解同一套推演）——正解须
+  达成目标（目标区归属 ≥ ``chain_own_min``）、死活/对杀须现在处理（脱先
+  损失 ≥ ``chain_tenuki_min``）、次优点不得同样达成；
+- ``winrate``：契约原文口径（19 路整盘 + allowMoves 局部聚焦）。
 
-1. 默认仍按契约阈值验题（``chain_answer_min_winrate=0.95`` /
-   ``chain_second_max_winrate=0.3``），并把局部聚焦坐标写进
-   ``branches.allow_moves``，判题补查沿用同一口径；
-2. 阈值可经 config 调整（``problems.chain_answer_min_winrate`` /
-   ``chain_second_max_winrate``）——想让定式链立即产出题目，实测把合格线
-   放宽到 0.80/0.35 量级即可（同一条链可产出数道「局部要点」题，
-   但题目锐度低于古典死活题）；
-3. 想要「正统死活题」质量的链，请把种子 SGF 换成**局面本身带生死**的
-   定式片段（如雪崩/妖刀走完、角上大龙未活），此时契约阈值即可达标。
+**实测结论（v1.7.1）**：三种口径在现有 10 条定式种子上都产出 0 题——定式
+终局是两分局面，本来就没有「一手定生死」的棋串（正确判读）。补测古典死活题
+（真死活）同样过不了阈值，原因是结构性的：**角部死活里防守方子力天然少于
+围攻方**，活棋只多几目，胜率（哪怕在小棋盘上）也上不去；而「正解 > 0.95」
+要求先手方本来就领先。因此要长出达标题，种子必须是**先手方明显领先且有一手
+定生死**的局面（大龙对杀、打入被围的攻杀），而不是「白先活棋」型。改完种子
+先用 ``scripts/check_chain_seeds.py`` 体检（会同时给出三种口径的读数）。
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
 from ...common import db as db_mod
 from ...common import sgf_io
 from ...common.settings import get_settings
+from ..engine.analyze_sgf import _game_to_query, _resolve_paths
+from ..engine.engine import KataGoEngine
 from ..engine.verify import VerifyResult
 from . import store, utils
 from .generator import result_dict, verify_candidates
@@ -462,6 +465,31 @@ class _Node:
         return utils.apply_moves(dict(self.stones), self.moves, size)
 
 
+def corner_board(
+    kept: utils.Position, size: int, margin: int = 2, min_size: int = 5
+) -> tuple[int, utils.Position, int, int]:
+    """把角部棋形搬到小棋盘（保留与两条边线的距离）→ (sub_size, mapping)。
+
+    只改棋盘大小（必要时平移），棋形本身不动 —— 角上「贴边」的气数关系因此
+    原样保留，另外两侧留 ``margin`` 路空余。
+
+    为什么需要它：19 路摆子局在**空棋盘**上的胜负由「谁朝向空旷盘面」决定
+    （实测：17 子角部实空只有 3 目时判落后 26 目），局部死活的一手摆动不了
+    整盘胜率。把局部裁成小棋盘后，局部攻杀就是全局内容——与 app 里 9 路
+    整盘复盘题（正解胜率 0.99）同一个道理，也正是「只讲局部死活」的字面含义。
+    """
+    x0, y0, x1, y1 = utils.bbox_of(kept.keys())
+    left = x0 <= size - 1 - x1
+    bottom = y0 <= size - 1 - y1
+    span_x = (x1 + 1) if left else (size - x0)
+    span_y = (y1 + 1) if bottom else (size - y0)
+    sub = max(span_x + margin, span_y + margin, int(min_size))
+    dx = 0 if left else sub - size
+    dy = 0 if bottom else sub - size
+    mapping = {(x + dx, y + dy): c for (x, y), c in kept.items()}
+    return sub, mapping, dx, dy
+
+
 def region_of(
     kept: utils.Position, size: int, pad: int = 2
 ) -> list[str]:
@@ -496,6 +524,178 @@ class _Outcome:
     results: list[VerifyResult]
     candidates: list[str]
     allow_moves: list[str]
+    local: dict = field(default_factory=dict)   # 局部死活画像（local_death 口径）
+    verify_board: dict = field(default_factory=dict)  # 小棋盘验题信息（local_board）
+
+
+# ---------------------------------------------------------------------------
+# 局部死活画像（口径同 v1.5.0 深度讲解 explainer.py 与 scripts/classify_result.py）
+# ---------------------------------------------------------------------------
+
+
+def _seq_with(setup_sgf: str, coords: list[str]) -> list[list[str]]:
+    """在题面基础上依次落子（行棋方由题面奇偶决定）→ 引擎 moves 序列。"""
+    parsed = sgf_io.parse_sgf(setup_sgf)
+    seq = [[c, "pass" if not p else p] for c, p in parsed.moves]
+    color = "W" if len(seq) % 2 else "B"
+    for cd in coords:
+        c = utils.normalize_coord(cd)
+        seq.append([color, "pass" if c == "pass" else c])
+        color = "W" if color == "B" else "B"
+    return seq
+
+
+def _own_of(
+    own: Optional[list],
+    size: int,
+    target_xy: tuple[int, int],
+    solver: str,
+    half: int = 2,
+) -> Optional[float]:
+    """目标区（点周围 ±half）平均归属，换算成**先手方视角**（正=目标达成）。
+
+    注意两套纵向口径：界面坐标 y=0 在下（``utils.coord_to_xy``），而 KataGo
+    的 ownership 数组是 ``y * size + x``、y=0 在**上**（SGF 顺序，与
+    ``explainer.parse_setup`` / ``classify_result.py`` 一致）——这里必须换算，
+    否则读的是上下镜像的区域（v1.7.1 修）。
+    ownership 正 = 黑方地盘；先手为白时取负 → 正负号统一表示「这块地方归先手方」，
+    活棋/杀棋成功时都为正。
+    """
+    if not own or len(own) != size * size:
+        return None
+    x0, y0_bottom = target_xy
+    y0 = size - 1 - y0_bottom          # 界面 y → ownership 行号（自上而下）
+    vals = [
+        own[y * size + x]
+        for dy in range(-half, half + 1)
+        for dx in range(-half, half + 1)
+        for x, y in [(x0 + dx, y0 + dy)]
+        if 0 <= x < size and 0 <= y < size
+    ]
+    if not vals:
+        return None
+    avg = sum(vals) / len(vals)
+    return round(avg if solver.upper() == "B" else -avg, 4)
+
+
+def local_death_profile(
+    setup_sgf: str,
+    size: int,
+    solver: str,
+    answer: str,
+    pv: list[str],
+    region: list[str],
+    target_xy: tuple[int, int],
+    profile: str = "fast",
+    pv_len: int = 6,
+    with_tenuki: bool = True,
+    engine: Optional[KataGoEngine] = None,
+) -> dict:
+    """局部死活画像：一手棋是否**达成局部死活目标**、以及**能否脱先**。
+
+    这是 v1.5.0 练习深度讲解（``explainer.py`` 局部推演）与原型脚本
+    ``scripts/classify_result.py`` 用的同一套口径，只是取量化值：
+
+    - ``allowMoves`` 锁定局部区域 + ``includeOwnership``；
+    - ``own_pv``：正解 + PV 走完后，目标区归属（先手方视角，正 = 目标达成
+      ——先手方的棋活了 / 对方的棋杀了）；
+    - ``own_after`` / ``tenuki_loss``：先手方脱先、对手抢到要点后的同一区域
+      归属与损失；损失越大越「必须现在处理」；
+    - ``result_type``：净（own_pv ≥ 0.85 且对手翻盘胜率 ≤ 5%）/ 劫或双活
+      （0.5~0.85，或对手仍有翻盘手段）/ 未达成（< 0.5）。
+
+    与整盘胜率相比，这套口径在 19 路角部局面上是**有意义**的：它只看局部
+    死活结果，不受「空棋盘上谁朝向空旷盘面」影响（实测见模块 docstring）。
+
+    ``engine``：可传入已启动的常驻引擎复用（同一层的正解/次优点两次画像
+    共用一个进程，省一次模型加载）；缺省自建自停。
+    """
+    own_engine = engine is None
+    if own_engine:
+        executable, model, cfg_path = _resolve_paths()
+        engine = KataGoEngine(executable, model, cfg_path, analysis_threads=1)
+    assert engine is not None
+    out: dict = {
+        "own_pv": None, "own_after": None, "tenuki_loss": None,
+        "grade": None, "result_type": None, "opp_winrate": None,
+        "answer": utils.normalize_coord(answer), "line": [],
+    }
+    if not region:
+        return out
+
+    def run(seq: list[list[str]]) -> dict:
+        q = _game_to_query(setup_sgf, profile, [len(seq)])
+        q["moves"] = seq
+        q["allowMoves"] = [
+            {"player": "B", "moves": region, "untilDepth": 100},
+            {"player": "W", "moves": region, "untilDepth": 100},
+        ]
+        q["includeOwnership"] = True
+        return engine.query(q) or {}
+
+    ans = utils.normalize_coord(answer)
+    line = [ans]
+    # PV 首手与正解重复时去重（防 Illegal move），其余按序走到 pv_len
+    for i, m in enumerate(list(pv or [])[: pv_len + 1]):
+        c = utils.normalize_coord(m)
+        if i == 0 and c == ans:
+            continue
+        if c == "pass" or c in line:
+            continue
+        line.append(c)
+    opp = "W" if solver.upper() == "B" else "B"
+    try:
+        engine.start()
+        r_solve = run(_seq_with(setup_sgf, line))
+        own_arr = (r_solve or {}).get("ownership")
+        out["own_pv"] = _own_of(own_arr, size, target_xy, solver)
+        opp_wr = ((r_solve or {}).get("rootInfo") or {}).get("winrate")
+        out["opp_winrate"] = None if opp_wr is None else round(float(opp_wr), 4)
+        out["line"] = line
+        if with_tenuki:
+            r_pass = run(_seq_with(setup_sgf, ["pass"]))
+            infos = (r_pass or {}).get("moveInfos") or []
+            best_opp = next((x for x in infos if x.get("order") == 0), None)
+            opp_move = utils.normalize_coord((best_opp or {}).get("move") or "")
+            if opp_move and opp_move != "pass":
+                r_after = run(_seq_with(setup_sgf, ["pass", opp_move]))
+                out["own_after"] = _own_of(
+                    (r_after or {}).get("ownership"), size, target_xy, solver
+                )
+                out["tenuki_reply"] = opp_move
+    except Exception:  # noqa: BLE001 —— 引擎异常不该让整条链生长失败
+        pass
+    finally:
+        if own_engine:
+            engine.stop()
+
+    if out["own_pv"] is not None and out["own_after"] is not None:
+        loss = round(out["own_pv"] - out["own_after"], 4)
+        out["tenuki_loss"] = loss
+        out["grade"] = (
+            "紧急" if loss >= 0.4 else ("半紧急" if loss >= 0.15 else "可脱先")
+        )
+    if out["own_pv"] is not None:
+        if out["own_pv"] < 0.5:
+            out["result_type"] = "未达成"
+        elif out["own_pv"] < 0.85 or (out["opp_winrate"] or 0.0) > 0.05:
+            out["result_type"] = "劫/双活"
+        else:
+            out["result_type"] = "净"
+    return out
+
+
+def goal_text(goal: str, result_type: Optional[str], solver: str) -> str:
+    """目标词 + 局部结果类型 → 讲解口径的死活结论（净活/劫活/净杀/劫杀…）。"""
+    if result_type in (None, "未达成"):
+        return ""
+    c = utils.COLOR_CN.get(solver.upper(), solver)
+    ko = "劫" if result_type == "劫/双活" else "净"
+    if goal in ("做活", "逃棋筋"):
+        return f"{c}方{ko}活"
+    if goal in ("杀棋", "吃棋筋", "对杀"):
+        return f"{c}方{ko}杀"
+    return f"{ko}（{result_type}）"
 
 
 def _reply_options(best: VerifyResult, max_replies: int) -> list[str]:
@@ -528,13 +728,28 @@ def _attempt(
     cfg_region_pad: int = 2,
     answer_min: float = 0.95,
     second_max: float = 0.3,
+    mode: str = "local_board",
+    own_min: float = 0.75,
+    tenuki_min: float = 0.15,
+    death_profile: str = "fast",
+    pv_len: int = 6,
+    board_margin: int = 2,
+    board_min_size: int = 5,
 ) -> Optional[_Outcome]:
     """对一个节点裁剪局部 + 验题；不达标返回 None。
 
-    合格线（契约 §4.3：正解 > ``answer_min``、次优 < ``second_max``；
-    死活/对杀另需 pass 后胜率 < ``urgent_max``）默认即契约值，可经
-    config ``problems.chain_answer_min_winrate`` /
-    ``chain_second_max_winrate`` 调整（19 路定式局面的实测口径见 docstring）。
+    三种验收口径（config ``problems.chain_verify_mode``）：
+
+    - ``local_board``（默认，**19 路推荐**）：把局部棋形裁成小棋盘（保留与
+      角部两条边线的距离），在小棋盘上按契约阈值验题（正解 > 0.95、
+      次优 < 0.3、死活/对杀 pass < 0.3）。小棋盘上局部攻杀就是全局内容，
+      阈值才有意义——与 app 里 9 路整盘复盘题同一尺度；
+    - ``local_death``：局部死活画像口径——正解须达成局部死活目标
+      （目标区归属 ≥ ``own_min``）、死活/对杀须现在处理（脱先损失 ≥
+      ``tenuki_min``）、次优点不得同样达成目标，再叠加契约胜率线；
+    - ``winrate``：契约原文口径，在 19 路整盘（+ allowMoves 局部聚焦）上验
+      ——正解 > ``answer_min``、次优 < ``second_max``、死活/对杀另需
+      pass 后胜率 < ``urgent_max``（实测 19 路定式局面几乎不可能达标）。
     """
     try:
         position = node.position(size)
@@ -556,15 +771,95 @@ def _attempt(
         prof = verify_profile.get(theme) or "standard"
     urgent = theme in ("life_death", "capturing_race")
     allow = region_of(kept, size, int(cfg_region_pad))
+
+    # 验题局面/棋盘：local_board 模式把局部裁成小棋盘再验（见 corner_board）
+    v_setup, v_size, v_cands, v_allow = setup, size, candidates, allow
+    board_info: dict = {}
+    b_dx = b_dy = 0
+    if mode == "local_board":
+        sub, mapping, b_dx, b_dy = corner_board(
+            kept, size, board_margin, board_min_size
+        )
+        if sub < size:
+            v_size = sub
+            v_setup = utils.setup_sgf(mapping, solver, sub)
+            v_cands = build_candidates(mapping, sub, max_candidates)
+            v_allow = region_of(mapping, sub, int(cfg_region_pad))
+            board_info = {
+                "size": sub, "stones": len(mapping), "dx": b_dx, "dy": b_dy,
+            }
+
     best, second, results, pass_ok = verify_candidates(
-        setup, candidates, prof, urgent_max, allow_moves=allow
+        v_setup, v_cands, prof, urgent_max, allow_moves=v_allow
     )
-    if best is None or (best.winrate or 0.0) <= float(answer_min):
+    if best is None:
         return None
-    if second is not None and (second.winrate or 0.0) >= float(second_max):
-        return None
-    if urgent and not pass_ok:
-        return None
+    target_xy = utils.coord_to_xy(best.coord)
+    if v_size != size:
+        # 小棋盘上的坐标 → 19 路界面坐标（题面/答案/变化一律用界面坐标）
+        def _back(cd: str) -> str:
+            try:
+                x, y = utils.coord_to_xy(cd)
+            except ValueError:
+                return cd
+            return utils.xy_to_coord(x - b_dx, y - b_dy, size)
+        best = replace(best, coord=_back(best.coord),
+                       pv=[_back(m) for m in (best.pv or [])],
+                       best_coord=(_back(best.best_coord)
+                                   if best.best_coord else best.best_coord))
+        if second is not None:
+            second = replace(
+                second, coord=_back(second.coord),
+                pv=[_back(m) for m in (second.pv or [])],
+                best_coord=(_back(second.best_coord)
+                            if second.best_coord else second.best_coord))
+        results = [
+            replace(r, coord=_back(r.coord),
+                    pv=[_back(m) for m in (r.pv or [])])
+            for r in results
+        ]
+
+    if mode in ("local_death", "local_board"):
+        # 局部死活口径：正解必须**达成**局部死活目标，且（死活/对杀）必须
+        # 现在处理；次优点不得同样达成目标（正解唯一）——见 local_death_profile。
+        # 次优点的画像只在正解已过其他门槛后才跑（多数候选到不了这一步）
+        local = local_death_profile(
+            v_setup, v_size, solver, best.coord, list(best.pv or []), v_allow,
+            target_xy, profile=death_profile, pv_len=pv_len,
+        )
+        own_pv = local.get("own_pv")
+        if mode == "local_death":
+            if own_pv is None or own_pv < float(own_min):
+                return None
+            if urgent:
+                loss = local.get("tenuki_loss")
+                if loss is None or loss < float(tenuki_min):
+                    return None
+            if second is not None:
+                alt = local_death_profile(
+                    v_setup, v_size, solver, second.coord,
+                    list(second.pv or []), v_allow, target_xy,
+                    profile=death_profile, pv_len=pv_len, with_tenuki=False,
+                )
+                if (alt.get("own_pv") is not None
+                        and alt["own_pv"] >= float(own_min)):
+                    return None   # 换个点也能达成目标 → 不是唯一急所
+        # 两种局部口径都叠加契约胜率线（local_board 下这是小棋盘上的胜率，
+        # 与 9 路整盘题同一尺度；local_death 下默认 0 = 不叠加）
+        if (best.winrate or 0.0) <= float(answer_min):
+            return None
+        if second is not None and (second.winrate or 0.0) >= float(second_max):
+            return None
+        if urgent and not pass_ok and mode == "local_death":
+            return None
+    else:
+        if (best.winrate or 0.0) <= float(answer_min):
+            return None
+        if second is not None and (second.winrate or 0.0) >= float(second_max):
+            return None
+        if urgent and not pass_ok:
+            return None
+        local = {}
     return _Outcome(
         kept=kept,
         setup_sgf=setup,
@@ -577,6 +872,8 @@ def _attempt(
         results=results,
         candidates=candidates,
         allow_moves=allow,
+        local=local if isinstance(local, dict) else {},
+        verify_board=board_info,
     )
 
 
@@ -606,6 +903,12 @@ def _problem_row(
         "profile": outcome.profile,
         # 局部聚焦区域（v1.7.0）：判题补查同一口径，避免全盘/局部两套胜率
         "allow_moves": outcome.allow_moves,
+        # 局部死活画像（local_death 口径）：目标区归属 / 脱先损失 / 结果类型，
+        # 深度讲解（explainer.py）与前端"本题目标"共用
+        "local": outcome.local,
+        # local_board 口径：验题所用的小棋盘（size/子数）；题面仍是 19 路
+        # 摆子局（界面坐标不变），验题在只含局部的等距小棋盘上做
+        "verify_board": outcome.verify_board,
         "verified_at": store.utcnow(),
         # 链谱系：完整手顺 + 步序（测试据此回放断言「第 n 题题面可由
         # 第 n-1 题的正解 + 对手应手重放得到」）
@@ -618,6 +921,29 @@ def _problem_row(
             "moves": [[c, coord] for c, coord in node.moves],
         },
     }
+    local = outcome.local or {}
+    verdict = utils.verdict_text(
+        outcome.theme,
+        outcome.solver,
+        best.coord,
+        best.winrate or 0.0,
+        second.coord if second else None,
+        second.winrate if second else None,
+    )
+    death = goal_text(outcome.goal, local.get("result_type"), outcome.solver)
+    if death:
+        extra = f"局部结论：{death}。"
+        if local.get("grade"):
+            loss = local.get("tenuki_loss")
+            extra += (
+                f"脱先损失 {loss:.2f}（{local['grade']}）——"
+                + ("必须现在处理。" if local["grade"] == "紧急" else
+                   ("最好现在处理。" if local["grade"] == "半紧急" else "可以脱先。"))
+            )
+        verdict = f"{verdict} {extra}"
+    hint = utils.hint_text(outcome.theme, outcome.solver, center, size)
+    if death:
+        hint = f"{hint}（目标：{death}）"
     return {
         "id": utils.problem_id(outcome.setup_sgf, outcome.theme),
         "source": "chain",
@@ -629,15 +955,8 @@ def _problem_row(
         "setup_sgf": outcome.setup_sgf,
         "answer": best.coord,
         "branches": json.dumps(branches, ensure_ascii=False),
-        "verdict": utils.verdict_text(
-            outcome.theme,
-            outcome.solver,
-            best.coord,
-            best.winrate or 0.0,
-            second.coord if second else None,
-            second.winrate if second else None,
-        ),
-        "hint": utils.hint_text(outcome.theme, outcome.solver, center, size),
+        "verdict": verdict,
+        "hint": hint,
         "explanation": None,  # 讲解按需由 coach/explain 生成（question 表缓存）
         "status": "active",
         "chain_id": chain["id"],
@@ -704,6 +1023,7 @@ def grow_chain(
     max_per_level: int = 3,
     profile: Optional[str] = None,
     db_path: str | Path | None = None,
+    verify_mode: Optional[str] = None,
 ) -> dict:
     """沿定式链生长题目（契约 §4.3 追加小节 POST /chains/{id}/grow）。
 
@@ -715,6 +1035,8 @@ def grow_chain(
     ``max_per_level``：每层最多尝试的种子数（主变 + 备选对手应手）；
     ``profile``：验题档位，缺省按 config ``problems.verify_profile``
     （死活/对杀 fine，其余 fallback 到 "standard"）。
+    ``verify_mode``：验收口径覆盖（``local_board``（默认）/ ``local_death`` /
+    ``winrate``），缺省取 config ``problems.chain_verify_mode``。
     """
     cfg = _problems_cfg()
     pad = int(cfg.get("chain_crop_pad", 1))
@@ -724,6 +1046,15 @@ def grow_chain(
     region_pad = int(cfg.get("chain_region_pad", 2))
     answer_min = float(cfg.get("chain_answer_min_winrate", 0.95))
     second_max = float(cfg.get("chain_second_max_winrate", 0.3))
+    mode = str(verify_mode or cfg.get("chain_verify_mode", "local_board")).lower()
+    if mode not in ("local_board", "local_death", "winrate"):
+        mode = "local_board"
+    own_min = float(cfg.get("chain_own_min", 0.75))
+    tenuki_min = float(cfg.get("chain_tenuki_min", 0.15))
+    death_profile = str(cfg.get("chain_death_profile", "fast"))
+    pv_len = int(cfg.get("chain_death_pv_len", 6))
+    board_margin = int(cfg.get("chain_board_margin", 2))
+    board_min_size = int(cfg.get("chain_board_min_size", 5))
     verify_profile = cfg.get("verify_profile", {}) or {}
     target_rank = int(cfg.get("chain_target_rank", DEFAULT_TARGET_RANK))
 
@@ -752,6 +1083,8 @@ def grow_chain(
             outcome = _attempt(
                 variant, size, pad, max_bbox, max_candidates, profile,
                 urgent_max, verify_profile, region_pad, answer_min, second_max,
+                mode, own_min, tenuki_min, death_profile, pv_len,
+                board_margin, board_min_size,
             )
             if outcome is None:
                 discarded += 1

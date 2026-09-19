@@ -349,6 +349,7 @@ class ChainGrowRequest(BaseModel):
     max_depth: int = 3                   # 从定式终局算起的层数
     max_per_level: int = 3               # 每层最多尝试的种子数
     profile: Optional[str] = None        # 验题档位；缺省按 config verify_profile
+    verify_mode: Optional[str] = None    # 验收口径：local_board(默认)/local_death/winrate
 
 
 class ChainGrowResponse(BaseModel):

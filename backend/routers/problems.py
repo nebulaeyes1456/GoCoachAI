@@ -179,6 +179,7 @@ def grow_chain(chain_id: str, req: ChainGrowRequest) -> ChainGrowResponse:
             max_depth=req.max_depth,
             max_per_level=req.max_per_level,
             profile=req.profile,
+            verify_mode=req.verify_mode,
         )
     except chains.ChainNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

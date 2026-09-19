@@ -98,14 +98,67 @@ def check(sgf_text: str, name: str, profile: str, use_allow: bool) -> bool:
     print(f"{'[OK]' if ok else '[X] '} {name:22s} {solver}先 子={len(kept):2d}"
           f" 包围盒={bbox} {theme}/{goal}")
     print(f"      正解={_fmt(best)} 次优={_fmt(second)} pass={_fmt_wr(pass_wr)}"
-          f"  合格线={answer_min}/{second_max}"
+          f"  胜率合格线={answer_min}/{second_max}"
           f"{'（需紧迫）' if urgent else ''}")
+
+    # ---- 小棋盘口径（默认 chain_verify_mode=local_board）：局部裁成小棋盘再验 ----
+    board_ok = False
+    if best is not None:
+        sub, mapping, _dx, _dy = chains.corner_board(kept, size, 2, 5)
+        if sub < size:
+            sub_setup = utils.setup_sgf(mapping, solver, sub)
+            sub_cands = chains.build_candidates(mapping, sub, max_candidates)
+            sub_region = chains.region_of(mapping, sub, region_pad)
+            sub_res = verify_position(sub_setup, sub_cands, profile=profile,
+                                      allow_moves=sub_region)
+            sub_valid = sorted(
+                [r for r in sub_res if r.error is None and r.coord != "pass"
+                 and r.winrate is not None],
+                key=lambda r: r.winrate or 0.0, reverse=True)
+            sb = sub_valid[0] if sub_valid else None
+            ss = sub_valid[1] if len(sub_valid) > 1 else None
+            sp = next((r.winrate for r in sub_res if r.coord == "pass"), None)
+            board_ok = (
+                sb is not None and (sb.winrate or 0) > answer_min
+                and (ss is None or (ss.winrate or 0) < second_max)
+                and (not urgent or (sp is not None and sp < urgent_max))
+            )
+            print(f"      小棋盘（{sub}路，{len(mapping)}子）：正解={_fmt(sb)} "
+                  f"次优={_fmt(ss)} pass={_fmt_wr(sp)}"
+                  f"  → {'达标' if board_ok else '不达标'}")
+
+    # ---- 局部死活口径（v1.5.0 深度讲解同一套推演）：能否达成目标 + 能否脱先 ----
+    local_ok = False
+    if best is not None and best.winrate is not None and allow:
+        cfgd = _cfg()
+        target = utils.coord_to_xy(best.coord)
+        prof = chains.local_death_profile(
+            setup, size, solver, best.coord, list(best.pv or []), allow,
+            target,
+            profile=str(cfgd.get("chain_death_profile", "fast")),
+            pv_len=int(cfgd.get("chain_death_pv_len", 6)),
+        )
+        own_min = float(cfgd.get("chain_own_min", 0.75))
+        tenuki_min = float(cfgd.get("chain_tenuki_min", 0.15))
+        own_pv = prof.get("own_pv")
+        loss = prof.get("tenuki_loss")
+        local_ok = (
+            own_pv is not None and own_pv >= own_min
+            and (not urgent or (loss is not None and loss >= tenuki_min))
+        )
+        death = chains.goal_text(goal, prof.get("result_type"), solver)
+        print(f"      局部死活：目标区归属={_fmt_wr(own_pv)} 脱先损失="
+              f"{_fmt_wr(loss)}（{prof.get('grade') or '-'}）"
+              f" 结果={prof.get('result_type') or '-'}"
+              f"{' ' + death if death else ''}"
+              f"  → {'可出题' if local_ok else '不达标'}"
+              f"（合格线 归属≥{own_min} / 脱先损失≥{tenuki_min}）")
     print(f"      setup={setup}")
     top = " ".join(
         f"{r.coord}:{r.winrate:.2f}" for r in valid[:5]
     )
     print(f"      候选前五：{top}")
-    if not ok:
+    if not ok and not local_ok:
         why = []
         if best is None or (best.winrate or 0) <= answer_min:
             why.append(f"正解胜率 {_fmt_wr(best.winrate if best else None)} "
@@ -115,8 +168,8 @@ def check(sgf_text: str, name: str, profile: str, use_allow: bool) -> bool:
                        f"≥ {second_max}（要点不唯一）")
         if urgent and (pass_wr is None or pass_wr >= urgent_max):
             why.append(f"脱先胜率 {_fmt_wr(pass_wr)} 不紧迫")
-        print("      → " + "；".join(why))
-    return ok
+        print("      胜率口径未过：" + "；".join(why) + "（19 路定式局面属正常）")
+    return ok or local_ok or board_ok
 
 
 def _fmt(r) -> str:

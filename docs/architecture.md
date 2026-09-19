@@ -353,15 +353,26 @@ POST /api/v1/problems/chains/{chain_id}/grow
   外扩 2 格，同古典题 v0.9.8 口径）局部聚焦——19 路摆子局在空棋盘上全盘搜索
   时一选常是局外大场、胜率被子力朝向主导。`verify_position` 因此新增**可选**
   参数 `allow_moves: list[str] | None = None`（追加、向后兼容，缺省全盘）。
-- **合格线**：正解胜率 > `problems.chain_answer_min_winrate`（默认 0.95）、
-  次优 < `chain_second_max_winrate`（默认 0.3）、死活/对杀另需 pass 后胜率 <
-  `problems.urgency_max_winrate`（默认 0.3）。
-- **实测提示（重要）**：19 路定式终局是两分局面，用上述契约阈值实测 10 条
-  定式链首轮 grow 均产出 0 题（定式局面没有生死攸关的棋串；摆子局在空棋盘上
-  的胜负由「谁朝向空旷盘面」决定）。想要链上出题，二选一：①把
-  `chain_answer_min_winrate`/`chain_second_max_winrate` 放宽到 0.80/0.35 量级；
-  ②把种子 SGF 换成**局面本身带生死**的定式片段（角上大龙未活/对杀），
-  此时契约阈值即可达标。详见 `backend/services/problems/chains.py` 模块注释。
+- **验收口径（`problems.chain_verify_mode`，默认 `local_board`）**，三种可选：
+  - `local_board`（默认，**19 路推荐**）：把局部棋形裁成**小棋盘**（保留与
+    角部两条边线的距离，`chain_board_margin`/`chain_board_min_size`）后按契约
+    阈值验题（正解 > `chain_answer_min_winrate`、次优 < `chain_second_max_winrate`、
+    死活/对杀 pass < `urgency_max_winrate`）。小棋盘上局部攻杀就是全局内容，
+    与 app 里 9 路整盘复盘题（正解胜率 0.99）同一尺度；题面/答案/变化一律
+    换算回 19 路界面坐标，`branches.verify_board` 记录小棋盘 size 与偏移。
+  - `local_death`：**局部死活画像**（与 v1.5.0 练习深度讲解 `explainer.py`
+    局部推演、原型 `scripts/classify_result.py` 同一套算法）——`allowMoves`
+    锁局部 + `includeOwnership`：正解须达成目标（目标区归属 ≥ `chain_own_min`）、
+    死活/对杀须现在处理（脱先损失 ≥ `chain_tenuki_min`）、次优点不得同样达成；
+    画像存 `branches.local`（`own_pv`/`own_after`/`tenuki_loss`/`grade`/
+    `result_type`），结论写进 `verdict`/`hint`（「目标：黑方净杀」）。
+  - `winrate`：契约原文口径（19 路整盘 + `allow_moves` 局部聚焦）。
+  可按调用覆盖：`POST /chains/{id}/grow` 的 `verify_mode` 字段。
+- **实测（v1.7.1）**：三种口径在现有 10 条定式种子上均产出 0 题——定式终局是
+  两分局面，没有「一手定生死」的棋串（正确判读）；古典死活题（真死活）同样
+  过不了阈值，原因是结构性的：角部死活中防守方子力天然少于围攻方，活棋只多
+  几目，胜率（哪怕小棋盘）也上不去。要长出达标题，种子须是**先手方明显领先
+  且有一手定生死**的局面。体检工具：`scripts/check_chain_seeds.py`。
 - 判题复用既有 `POST /api/v1/problems/{id}/attempt`：链上题 `branches.allow_moves`
   非空时，错误答案的补查沿用同一局部口径，保证反馈里的胜率与 `branches` 一套尺度。
 - 题面性质：`setup_sgf` 为 19 路摆子局（AB/AW，白先前置 `;B[tt]` 修奇偶），
@@ -526,8 +537,15 @@ problems:
   chain_crop_pad: 1               # 题面裁剪：定式区域包围盒外扩格数
   chain_max_bbox: 9               # 题面最大包围盒（超框丢弃该分支）
   chain_region_pad: 2             # 验题局部聚焦区域 = 题面包围盒外扩格数
-  chain_answer_min_winrate: 0.95  # 合格线：正解胜率下限（契约值）
-  chain_second_max_winrate: 0.3   # 合格线：次优胜率上限（契约值）
+  chain_verify_mode: local_board  # local_board（默认，局部裁小棋盘再验）| local_death | winrate
+  chain_board_margin: 2           # local_board：小棋盘在非贴边两侧留的余量
+  chain_board_min_size: 5         # local_board：小棋盘最小边长
+  chain_own_min: 0.75             # local_death：正解目标区归属下限（正=控住该区）
+  chain_tenuki_min: 0.15          # local_death：脱先损失下限（0.15 半紧急 / 0.4 紧急）
+  chain_death_profile: fast       # local_death：局部推演档位
+  chain_death_pv_len: 6           # local_death：局部推演走多少手 PV
+  chain_answer_min_winrate: 0.95  # winrate 口径：正解胜率下限（契约值）
+  chain_second_max_winrate: 0.3   # winrate 口径：次优胜率上限（契约值）
   chain_target_rank: -5           # 链上题目标级位中心（难度分级用）
 ```
 
