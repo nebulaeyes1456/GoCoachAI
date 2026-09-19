@@ -89,6 +89,58 @@ def _verify_with(engine, setup_sgf: str, candidates: list[str],
     return out
 
 
+def _book_name(dir_name: str) -> str:
+    return {"gokyoshumyo": "碁経衆妙", "guanzipu": "官子谱",
+            "xxqj": "玄玄棋经", "hatsuyoron": "发阳论",
+            "wangyou": "忘忧清乐集", "xuanlan": "玄览"}.get(dir_name, dir_name)
+
+
+def make_seed_sgf(f: Path, r: dict) -> tuple[str, str, str]:
+    """命中题 → (种子 SGF, 链名, 说明)。摆子局 + 白先奇偶修正。"""
+    book = _book_name(f.parent.name)
+    name = f"古典死活·{book}·{f.stem}"
+    desc = (f"源自公版古典死活《{book}》{f.stem}：{r['solver']}先，"
+            f"局部 {r['stones']} 子，正解 {r['best_coord']}"
+            f"（正解-次优胜率差 {r['gap2']:.2f}）"
+            + (f"；{r['race_text']}" if r["race"] else ""))
+    src = sgf_io.parse_sgf(f.read_text(encoding="utf-8"))
+    ab = "".join(f"[{sgf_io.coord_to_sgf(c, r['size'])}]"
+                 for col, c in src.setup if c and col == "B")
+    aw = "".join(f"[{sgf_io.coord_to_sgf(c, r['size'])}]"
+                 for col, c in src.setup if c and col == "W")
+    tail = (";B[" + chr(ord("a") + r["size"]) * 2 + "]"
+            if r["solver"] == "W" else "")
+    sgf = (f"(;GM[1]FF[4]CA[UTF-8]SZ[{r['size']}]KM[7.5]"
+           f"C[{name}]GN[{name}]RE[mixed]GC[{desc}]"
+           + (f"AB{ab}" if ab else "") + (f"AW{aw}" if aw else "")
+           + tail + ")")
+    return sgf, name, desc
+
+
+def emit_hit(f: Path, r: dict, out_dir: Path | None = None,
+             register: bool = False, grow_profile: str = "standard",
+             grow_mode: str = "library") -> None:
+    """命中即落盘（+ 可选注册与生长）——放在循环内，长跑中断也不丢。"""
+    sgf, name, desc = make_seed_sgf(f, r)
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"classic-{f.parent.name}-{f.stem}.sgf"
+        path.write_text(sgf, encoding="utf-8", newline="\n")
+        print(f"[写出] {path}")
+    if register:
+        from backend.services.problems import chains as _chains
+        cid = f"chain-classic-{f.parent.name}-{f.stem}"
+        _chains.register_chain({"id": cid, "name": name, "theme": "mixed",
+                                "root_sgf": sgf, "description": desc})
+        try:
+            res = _chains.grow_chain(cid, max_depth=2, max_per_level=3,
+                                     profile=grow_profile, verify_mode=grow_mode)
+            print(f"[注册+生长] {cid}：新增 {res['added']} 题"
+                  f"（丢弃 {res['discarded']}）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[注册+生长] {cid} 生长失败：{exc}")
+
+
 def evaluate(engine, sgf_text: str, profile: str) -> dict | None:
     """单个题面 → 各口径读数（不写库）。"""
     cfg = _cfg()
@@ -207,6 +259,7 @@ def main() -> None:
                 encoding="utf-8", newline="\n",
             )
 
+    out_dir = Path(args.out) if args.out else None
     exe, model, cfgp = _resolve_paths()
     engine = KataGoEngine(exe, model, cfgp, analysis_threads=1)
     engine.start()
@@ -233,6 +286,8 @@ def main() -> None:
                   "library": r["library_ok"]}[args.bar]
             if ok:
                 hits.append((f, r))
+                emit_hit(f, r, out_dir, args.register,
+                         args.grow_profile, args.grow_mode)
             done.add(key)
             if (i + 1) % 10 == 0:
                 _flush()
@@ -255,42 +310,6 @@ def main() -> None:
     if not hits:
         print("没有命中：可降低 --limit 之外的判据（problems.chain_relative_gap）再试，"
               "或换题库目录。")
-
-    if args.out and hits:
-        out_dir = Path(args.out)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        book_map = {"gokyoshumyo": "碁経衆妙", "guanzipu": "官子谱",
-                    "xxqj": "玄玄棋经", "hatsuyoron": "发阳论",
-                    "wangyou": "忘忧清乐集", "xuanlan": "玄览"}
-        for i, (f, r) in enumerate(hits[:20], 1):
-            book = book_map.get(f.parent.name, f.parent.name)
-            name = f"古典死活·{book}·{f.stem}"
-            desc = (f"源自公版古典死活《{book}》{f.stem}：{r['solver']}先，"
-                    f"局部 {r['stones']} 子，正解 {r['best_coord']}"
-                    f"（正解-次优胜率差 {r['gap2']:.2f}）"
-                    + (f"；{r['race_text']}" if r["race"] else ""))
-            src = sgf_io.parse_sgf(f.read_text(encoding="utf-8"))
-            body = "".join(
-                f"[{sgf_io.coord_to_sgf(c, r['size'])}]"
-                for _col, c in src.setup if c
-            )
-            ab = "".join(
-                f"[{sgf_io.coord_to_sgf(c, r['size'])}]"
-                for col, c in src.setup if c and col == "B"
-            )
-            aw = "".join(
-                f"[{sgf_io.coord_to_sgf(c, r['size'])}]"
-                for col, c in src.setup if c and col == "W"
-            )
-            tail = ";B[" + chr(ord("a") + r["size"]) * 2 + "]" \
-                if r["solver"] == "W" else ""
-            sgf = (f"(;GM[1]FF[4]CA[UTF-8]SZ[{r['size']}]KM[7.5]"
-                   f"C[{name}]GN[{name}]RE[mixed]GC[{desc}]"
-                   + (f"AB{ab}" if ab else "") + (f"AW{aw}" if aw else "")
-                   + tail + ")")
-            path = out_dir / f"classic-{f.parent.name}-{f.stem}.sgf"
-            path.write_text(sgf, encoding="utf-8", newline="\n")
-            print(f"[写出] {path}")
 
 
 if __name__ == "__main__":
