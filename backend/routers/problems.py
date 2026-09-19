@@ -31,6 +31,8 @@ from ..common.models import (
     ExtractFromReviewResponse,
     GeneratedProblemBrief,
     LibraryProblemBrief,
+    LifeDeathRequest,
+    LifeDeathResponse,
     ProblemAttemptRequest,
     ProblemAttemptResponse,
     ProblemDetailResponse,
@@ -47,6 +49,7 @@ from ..services.problems import (
     explainer,
     extractor,
     generator,
+    life_death,
     store,
 )
 
@@ -116,6 +119,24 @@ def extract(req: ProblemExtractRequest) -> ProblemExtractResponse:
         failed=int(result["failed"]),
         skipped=int(result["skipped"]),
     )
+
+
+@router.post("/life_death", response_model=LifeDeathResponse)
+def life_death_report(req: LifeDeathRequest) -> LifeDeathResponse:
+    """快速死活判定（v1.7.2）：给一个棋形，判断黑/白是活、死、双活还是劫活。
+
+    纯 KataGo 局部推演（allowMoves 锁局部 + ownership），不调 LLM、不生成题；
+    同步接口（约数秒，引擎单进程）。
+    """
+    if not (req.sgf_text or "").strip():
+        raise HTTPException(status_code=400, detail="sgf_text 不能为空")
+    try:
+        report = life_death.classify(
+            req.sgf_text, profile=req.profile, region_pad=req.region_pad
+        )
+    except Exception as exc:  # 引擎启动失败等
+        raise HTTPException(status_code=502, detail=f"死活判定失败: {exc}") from exc
+    return LifeDeathResponse(report=report, verdict=life_death.verdict_text(report))
 
 
 @router.get("/chains", response_model=ChainListResponse)

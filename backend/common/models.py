@@ -352,6 +352,19 @@ class ChainGrowRequest(BaseModel):
     verify_mode: Optional[str] = None    # 验收口径：local_board(默认)/local_death/winrate
 
 
+class LifeDeathRequest(BaseModel):
+    """快速死活判定（v1.7.2）：给一个棋形，判断双方死活。"""
+
+    sgf_text: str
+    profile: str = "fast"            # fast/standard/fine（局部推演档位）
+    region_pad: Optional[int] = None  # 局部聚焦外扩格数；缺省按 config
+
+
+class LifeDeathResponse(BaseModel):
+    report: dict = Field(default_factory=dict)  # control/status/ko/tenuki_loss…
+    verdict: str = ""                           # 一句话结论
+
+
 class ChainGrowResponse(BaseModel):
     chain_id: str
     added: int = 0                       # 本次新入库题数（重复 grow 为 0）

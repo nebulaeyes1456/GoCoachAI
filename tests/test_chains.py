@@ -25,7 +25,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backend.common import db as db_mod  # noqa: E402
 from backend.common import sgf_io  # noqa: E402
 from backend.services.engine.verify import VerifyResult  # noqa: E402
-from backend.services.problems import chains, store, utils  # noqa: E402
+from backend.services.problems import (  # noqa: E402
+    chains,
+    life_death,
+    store,
+    utils,
+)
 
 ENGINE_EXE = PROJECT_ROOT / "engine" / "katago-eigenavx2.exe"
 MODEL = PROJECT_ROOT / "engine" / "b10c128.bin.gz"
@@ -516,3 +521,62 @@ class TestGrowEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLifeDeath(unittest.TestCase):
+    """快速死活判定（v1.7.2，纯规则 + 局部推演）。"""
+
+    def test_pv_sequence_keeps_parity_on_skipped_points(self):
+        """变化里出现已占点/重复点时，用同色 pass 占位保住黑白交替。"""
+        sgf = "(;GM[1]FF[4]CA[UTF-8]SZ[9]AB[cc]AW[dd];B[tt])"
+        seq = life_death.pv_sequence(sgf, ["E5", "cc", "F5"], 9)
+        self.assertEqual(seq[0], ["B", "pass"])     # 题面自带的白先修正
+        self.assertEqual(seq[1], ["W", "E5"])
+        self.assertEqual(seq[2], ["B", "pass"])     # cc 已占 → 占位
+        self.assertEqual(seq[3], ["W", "F5"])       # 仍是白（轮次未被吃掉）
+
+    def test_pv_sequence_dedupes_and_skips_pass(self):
+        sgf = "(;GM[1]FF[4]CA[UTF-8]SZ[9])"
+        seq = life_death.pv_sequence(sgf, ["E5", "E5", "pass", "F5"], 9)
+        coords = [m for _c, m in seq]
+        self.assertEqual(coords, ["E5", "pass", "pass", "F5"])
+
+    def test_dup_points_within_one_line_only(self):
+        """同一条变化内重复 = 回提（劫）；不同变化之间的同点不算劫。"""
+        self.assertEqual(life_death._dup_points(["A1", "B1", "A1"]), ["A1"])
+        self.assertEqual(life_death._dup_points(["A1", "B1"], ["A1", "C1"]), [])
+
+    def test_status_thresholds(self):
+        self.assertEqual(life_death._status(0.9), "活")
+        self.assertEqual(life_death._status(-0.9), "死")
+        self.assertEqual(life_death._status(0.2), "未定")
+        self.assertEqual(life_death._status(None), "未定")
+
+    def test_verdict_text(self):
+        rep = {"status": {"B": "活", "W": "死"}, "control": {"B": 0.9, "W": -0.7},
+               "tenuki_loss": 0.42, "grade": "紧急", "ko": False}
+        text = life_death.verdict_text(rep)
+        self.assertIn("黑方活棋", text)
+        self.assertIn("脱先损失 0.42", text)
+        rep2 = {"status": {"B": "未定", "W": "未定"},
+                "control": {"B": 0.1, "W": 0.1}, "ko": True,
+                "ko_points": ["D5"], "tenuki_loss": None}
+        self.assertIn("未定型", life_death.verdict_text(rep2))
+        self.assertIn("D5", life_death.verdict_text(rep2))
+
+    def test_classify_empty_sgf(self):
+        rep = life_death.classify("(;GM[1]FF[4]SZ[19])", profile="fast")
+        self.assertEqual(rep["stones"], 0)
+        self.assertEqual(rep["status"]["B"], "未定")
+
+    @unittest.skipUnless(ENGINE_EXE.exists() and MODEL.exists(), "需要引擎与模型")
+    def test_classify_e2e_closed_corner(self):
+        """封闭角部棋形：应给出可解释的控制力读数（不崩、不误报活棋）。"""
+        sgf = ("(;GM[1]FF[4]CA[UTF-8]SZ[19]KM[7.5]"
+               "AB[as][bs][cs][ds][es][ar][br][cr][dr][er][aq][bq][cq][dq][eq]"
+               "AW[fs][fr][fq][ao][bo][co][do][eo][ap][bp][cp][dp][ep])")
+        rep = life_death.classify(sgf, profile="fast")
+        self.assertIn(rep["status"]["B"], ("活", "死", "未定"))
+        self.assertIn(rep["status"]["W"], ("活", "死", "未定"))
+        self.assertIsNotNone(rep["control"]["B"])
+        self.assertTrue(rep["note"])
