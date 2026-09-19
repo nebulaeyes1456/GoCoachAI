@@ -44,7 +44,7 @@ async def lifespan(_app: FastAPI):
     review_service.get_service().stop()
 
 
-app = FastAPI(title="GoCoachAI", version="1.7.3", lifespan=lifespan)
+app = FastAPI(title="GoCoachAI", version="1.7.4", lifespan=lifespan)
 
 # API 路由（§4）
 app.include_router(system.router)

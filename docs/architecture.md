@@ -370,8 +370,17 @@ POST /api/v1/problems/chains/{chain_id}/grow
     且比脱先高 ≥ `chain_relative_urgency`（默认 0.3），可选绝对下限
     `chain_relative_floor`（默认 0）；判的是「唯一急所 + 必须现在处理」，
     不受空盘面稀释（`branches.gaps` 记录两个差值）。
+  - `library`（v1.7.4）：**题库同尺**——正解 ≥ `chain_library_min_winrate`
+    （默认 0.6，即古典题入库线 `MIN_ANSWER_WINRATE`）且正解 − 次优 ≥
+    `chain_library_min_gap`（默认 0.15），死活/对杀另需正解 − 脱先 ≥
+    `chain_relative_urgency`；用于**从古典死活题集挑出来的种子**（19 路局部题
+    在整盘尺度上过不了 0.95，但按题库同一把尺子是合格题）。
   - `winrate`：契约原文口径（19 路整盘 + `allow_moves` 局部聚焦）。
   可按调用覆盖：`POST /chains/{id}/grow` 的 `verify_mode` 字段。
+- **种子来源（v1.7.4）**：`scripts/find_viable_seeds.py` 对题集目录批量体检
+  （默认 `data/library/import_classics/`，六本公版棋书），按三档判据
+  （`strict`/`relative`/`library`）挑出「能长出题」的题面并写成链种子 SGF；
+  实测 66 题样本命中 3 题（library 档），已注册为 `chain-classic-*` 链。
 - **种子挖掘（v1.7.3）**：`scripts/mine_chain_seeds.py` 从定式起点沿局部实战
   搜索「一手定生死」的局面——规则气数预筛（不启引擎）+ 与 grow 完全相同的
   验题路径判定，找到的种子保证可长出题；`--register` 可直接注册并生长。

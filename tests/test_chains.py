@@ -678,3 +678,74 @@ class TestRelativeGate(unittest.TestCase):
     def test_rejects_when_can_tenuki(self):
         result = self._grow(self._verify(0.60, 0.05, 0.55), max_depth=1)
         self.assertEqual(result["added"], 0)
+
+
+class TestLibraryGate(unittest.TestCase):
+    """library 口径（题库同尺）：古典题入库线 0.6 + 答案明显更优 0.15。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "lib.db"
+        db_mod.init_db(self.db)
+        chains.register_chain(
+            {"id": "chain-l", "name": "题库同尺链", "root_sgf": ROOT_SGF}, self.db,
+        )
+        self._cfg = mock.patch.object(
+            chains, "_problems_cfg",
+            return_value={"chain_library_min_winrate": 0.6,
+                          "chain_library_min_gap": 0.15,
+                          "chain_relative_urgency": 0.3},
+        )
+        self._cfg.start()
+        self.addCleanup(self._cfg.stop)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _verify(self, best_wr, second_wr, pass_wr):
+        def fake(setup_sgf, candidates, profile, urgent_max, allow_moves=None):
+            others = [c for c in candidates if c != "pass"]
+            results = []
+            for c in candidates:
+                if c == "pass":
+                    results.append(VerifyResult(coord="pass", winrate=pass_wr,
+                                                visits=600, pv=[], best_coord=""))
+                else:
+                    wr = best_wr if c == others[0] else second_wr
+                    results.append(VerifyResult(
+                        coord=c, winrate=wr, visits=600,
+                        pv=[c, others[1] if len(others) > 1 else ""],
+                        best_coord=others[1] if len(others) > 1 else ""))
+            valid = sorted([r for r in results if r.coord != "pass"],
+                           key=lambda r: r.winrate or 0, reverse=True)
+            return valid[0], valid[1], results, True
+        return fake
+
+    def _grow(self, side_effect, **kw):
+        with mock.patch.object(chains, "verify_candidates",
+                               side_effect=side_effect), \
+             mock.patch.object(utils, "classify_theme",
+                               return_value="life_death"):
+            return chains.grow_chain("chain-l", db_path=self.db,
+                                     verify_mode="library", **kw)
+
+    def test_accepts_library_grade_position(self):
+        # 正解 0.75（≥0.6）、差 0.20（≥0.15）、脱先差 0.65（≥0.3）→ 收
+        result = self._grow(self._verify(0.75, 0.55, 0.10), max_depth=1)
+        self.assertEqual(result["added"], 1)
+        gaps = json.loads(
+            store.list_chain_problems("chain-l", self.db)[0]["branches"]
+        )["gaps"]
+        self.assertAlmostEqual(gaps["gap_second"], 0.2, places=3)
+
+    def test_rejects_below_library_line(self):
+        result = self._grow(self._verify(0.55, 0.20, 0.05), max_depth=1)
+        self.assertEqual(result["added"], 0)
+
+    def test_rejects_when_answer_not_distinct(self):
+        result = self._grow(self._verify(0.80, 0.70, 0.10), max_depth=1)
+        self.assertEqual(result["added"], 0)
+
+    def test_rejects_when_can_tenuki(self):
+        result = self._grow(self._verify(0.80, 0.40, 0.70), max_depth=1)
+        self.assertEqual(result["added"], 0)

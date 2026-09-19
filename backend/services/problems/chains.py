@@ -737,6 +737,8 @@ def _attempt(
     board_min_size: int = 5,
     rel_gap: float = 0.5,
     rel_urgency: float = 0.3,
+    lib_min: float = 0.6,
+    lib_gap: float = 0.15,
 ) -> Optional[_Outcome]:
     """对一个节点裁剪局部 + 验题；不达标返回 None。
 
@@ -752,6 +754,11 @@ def _attempt(
     - ``relative``：相对口径——正解比次优强 ≥ ``chain_relative_gap``（默认 0.5）
       且比脱先强 ≥ ``chain_relative_urgency``（默认 0.3），不看绝对胜率，
       因此不受空盘面稀释（判的是「唯一急所 + 必须现在处理」）；
+    - ``library``：**题库同尺**——正解 ≥ ``chain_library_min_winrate``（默认 0.6，
+      古典题入库线）且正解 − 次优 ≥ ``chain_library_min_gap``（默认 0.15），
+      死活/对杀另需 正解 − 脱先 ≥ ``chain_relative_urgency``；用于从古典死活
+      题集挑出来的种子（19 路局部题在整盘尺度上过不了 0.95，但按题库同一把
+      尺子是合格题）；
     - ``winrate``：契约原文口径，在 19 路整盘（+ allowMoves 局部聚焦）上验
       ——正解 > ``answer_min``、次优 < ``second_max``、死活/对杀另需
       pass 后胜率 < ``urgent_max``（实测 19 路定式局面几乎不可能达标）。
@@ -857,6 +864,29 @@ def _attempt(
             return None
         if urgent and not pass_ok and mode == "local_death":
             return None
+    elif mode == "library":
+        # 题库同尺（v1.7.4）：古典题入库用的就是这把尺子——正解 ≥
+        # ``chain_library_min_winrate``（默认 0.6＝MIN_ANSWER_WINRATE），
+        # 且正解 − 次优 ≥ ``chain_library_min_gap``（默认 0.15＝答案明显更优）；
+        # 死活/对杀另需 正解 − 脱先 ≥ ``chain_relative_urgency``（默认 0.3）。
+        # 用途：从古典死活题集挑出来的种子（19 路局部题在小棋盘上也过不了
+        # 0.95，但按题库同一把尺子是合格题）。
+        best_wr = best.winrate or 0.0
+        second_wr = second.winrate if second and second.winrate is not None else 0.0
+        pass_wr = next(
+            (r.winrate for r in results
+             if r.coord == "pass" and r.error is None and r.winrate is not None),
+            None,
+        )
+        local = {"gap_second": round(best_wr - second_wr, 4),
+                 "gap_pass": None if pass_wr is None
+                 else round(best_wr - pass_wr, 4)}
+        if best_wr < float(lib_min):
+            return None
+        if best_wr - second_wr < float(lib_gap):
+            return None                       # 答案不够突出
+        if urgent and pass_wr is not None and best_wr - pass_wr < float(rel_urgency):
+            return None                       # 可以脱先
     elif mode == "relative":
         # 相对口径：不看绝对胜率，只看「正解比次优强多少、比脱先强多少」
         # ——不受空盘面稀释，判的是「唯一急所 + 必须现在处理」，与死活题
@@ -934,7 +964,7 @@ def _problem_row(
         # local_board 口径：验题所用的小棋盘（size/子数）；题面仍是 19 路
         # 摆子局（界面坐标不变），验题在只含局部的等距小棋盘上做
         "verify_board": outcome.verify_board,
-        # relative 口径：正解−次优 / 正解−脱先 的胜率差（判「唯一急所」）
+        # relative / library 口径：正解−次优 / 正解−脱先 的胜率差
         "gaps": {k: v for k, v in (outcome.local or {}).items()
                  if k in ("gap_second", "gap_pass")},
         "verified_at": store.utcnow(),
@@ -1075,13 +1105,15 @@ def grow_chain(
     answer_min = float(cfg.get("chain_answer_min_winrate", 0.95))
     second_max = float(cfg.get("chain_second_max_winrate", 0.3))
     mode = str(verify_mode or cfg.get("chain_verify_mode", "local_board")).lower()
-    if mode not in ("local_board", "local_death", "relative", "winrate"):
+    if mode not in ("local_board", "local_death", "relative", "library", "winrate"):
         mode = "local_board"
     own_min = float(cfg.get("chain_own_min", 0.75))
     tenuki_min = float(cfg.get("chain_tenuki_min", 0.15))
     death_profile = str(cfg.get("chain_death_profile", "fast"))
     pv_len = int(cfg.get("chain_death_pv_len", 6))
     rel_gap = float(cfg.get("chain_relative_gap", 0.5))
+    lib_min = float(cfg.get("chain_library_min_winrate", 0.6))
+    lib_gap = float(cfg.get("chain_library_min_gap", 0.15))
     rel_urgency = float(cfg.get("chain_relative_urgency", 0.3))
     if mode == "relative":
         # 相对口径默认不设绝对胜率下限（0.95 是 9 路整盘尺度的经验值）
@@ -1118,7 +1150,7 @@ def grow_chain(
                 urgent_max, verify_profile, region_pad, answer_min, second_max,
                 mode, own_min, tenuki_min, death_profile, pv_len,
                 board_margin, board_min_size,
-                rel_gap, rel_urgency,
+                rel_gap, rel_urgency, lib_min, lib_gap,
             )
             if outcome is None:
                 discarded += 1

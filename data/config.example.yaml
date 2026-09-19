@@ -51,6 +51,8 @@ problems:
   chain_relative_gap: 0.5        # relative：正解需比次优高出的胜率（唯一急所）
   chain_relative_urgency: 0.3    # relative：正解需比脱先高出的胜率（必须现在处理）
   chain_relative_floor: 0.0      # relative：可选的绝对胜率下限（默认不设）
+  chain_library_min_winrate: 0.6 # library：正解胜率下限（=古典题入库线 MIN_ANSWER_WINRATE）
+  chain_library_min_gap: 0.15    # library：正解 − 次优 的下限（答案明显更优）
   chain_board_margin: 2          # local_board：小棋盘余量
   chain_board_min_size: 5        # local_board：小棋盘最小边长
   chain_own_min: 0.75            # 局部死活：正解目标区归属下限（正=先手方控住该区）
