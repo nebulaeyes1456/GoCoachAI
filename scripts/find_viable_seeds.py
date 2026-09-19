@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -30,7 +31,8 @@ from backend.common import sgf_io  # noqa: E402
 from backend.common.settings import get_settings  # noqa: E402
 from backend.services.engine.analyze_sgf import _resolve_paths  # noqa: E402
 from backend.services.engine.engine import KataGoEngine  # noqa: E402
-from backend.services.engine.verify import verify_position  # noqa: E402
+from backend.services.engine.analyze_sgf import _game_to_query  # noqa: E402
+from backend.services.engine.verify import VerifyResult, verify_position  # noqa: E402
 from backend.services.problems import chains, life_death, utils  # noqa: E402
 
 DEFAULT_LIB = ROOT / "data" / "library" / "import_classics"
@@ -39,6 +41,52 @@ DEFAULT_LIB = ROOT / "data" / "library" / "import_classics"
 def _cfg() -> dict:
     cfg = get_settings().get("problems", {})
     return cfg if isinstance(cfg, dict) else {}
+
+
+def _verify_with(engine, setup_sgf: str, candidates: list[str],
+                 region: list[str], profile: str) -> list:
+    """与 ``verify_position`` 同口径，但复用常驻引擎（省掉每题一次模型加载）。
+
+    这条是筛题的速度命门：verify_position 每次自建自停引擎（约 30 秒），
+    而筛题要跑成百上千题 —— 直接查常驻进程，单题从 ~46 秒降到 ~5-10 秒。
+    """
+    parsed = sgf_io.parse_sgf(setup_sgf)
+    base = [[c, "pass" if not p else p] for c, p in parsed.moves]
+    out = []
+    for coord in candidates:
+        color = "W" if len(base) % 2 else "B"
+        c = coord.strip().upper()
+        move = "pass" if c in ("", "PASS") else c
+        moves = [list(m) for m in base] + [[color, move]]
+        q = _game_to_query(setup_sgf, profile, [len(moves)])
+        q["moves"] = moves
+        if region:
+            q["allowMoves"] = [
+                {"player": "B", "moves": region, "untilDepth": 100},
+                {"player": "W", "moves": region, "untilDepth": 100},
+            ]
+        try:
+            resp = engine.query(q) or {}
+        except Exception as exc:  # noqa: BLE001 —— 非法着点等
+            out.append(VerifyResult(coord=move, error=str(exc)))
+            continue
+        root = resp.get("rootInfo") or {}
+        infos = resp.get("moveInfos") or []
+        opp_wr = root.get("winrate")
+        best = next((m for m in infos if m.get("order") == 0), None)
+        raw_pv = (best or {}).get("pv") or []
+        pv = [("" if str(p).lower() == "pass" else str(p)) for p in raw_pv]
+        bm = str((best or {}).get("move", ""))
+        out.append(VerifyResult(
+            coord=move,
+            winrate=None if opp_wr is None else 1.0 - float(opp_wr),
+            score_lead=(None if root.get("scoreLead") is None
+                        else -float(root["scoreLead"])),
+            visits=root.get("visits"),
+            pv=[("" if move == "pass" else move)] + pv,
+            best_coord="" if bm.lower() == "pass" else bm,
+        ))
+    return out
 
 
 def evaluate(engine, sgf_text: str, profile: str) -> dict | None:
@@ -70,7 +118,7 @@ def evaluate(engine, sgf_text: str, profile: str) -> dict | None:
     setup = utils.setup_sgf(kept, solver, size)
     cands = chains.build_candidates(kept, size, max_candidates=max_candidates)
     region = chains.region_of(kept, size, region_pad)
-    results = verify_position(setup, cands, profile=profile, allow_moves=region)
+    results = _verify_with(engine, setup, cands, region, profile)
     valid = sorted(
         [r for r in results
          if r.error is None and r.coord != "pass" and r.winrate is not None],
@@ -113,6 +161,14 @@ def main() -> None:
                     help="抽样起点偏移（分批跑用，避免与上一批重复）")
     ap.add_argument("--profile", default="fast")
     ap.add_argument("--out", default="", help="把命中题写成链种子 SGF 的目录")
+    ap.add_argument("--state", default="data/tmp/find_state.json",
+                    help="断点状态文件（长跑/分批续跑用；空串=不记）")
+    ap.add_argument("--register", action="store_true",
+                    help="命中即注册为链并生长（挂机用）")
+    ap.add_argument("--grow-profile", default="standard",
+                    help="注册后生长用的验题档位")
+    ap.add_argument("--grow-mode", default="library",
+                    help="注册后生长用的口径")
     ap.add_argument("--bar", default="relative",
                     choices=("strict", "relative", "library"),
                     help="命中判据：strict=契约(0.95/0.3)；relative=相对差值；"
@@ -133,6 +189,24 @@ def main() -> None:
     print(f"体检 {len(files)} 题（档位 {args.profile}，判据 {args.bar}，"
           f"相对线 {rel_gap}）")
 
+    state_path = Path(args.state) if args.state else None
+    done: set[str] = set()
+    if state_path and state_path.exists():
+        try:
+            done = set(json.loads(state_path.read_text(encoding="utf-8")))
+        except Exception:  # noqa: BLE001
+            done = set()
+    if done:
+        print(f"断点续跑：已完成 {len(done)} 题，跳过")
+
+    def _flush() -> None:
+        if state_path:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps(sorted(done), ensure_ascii=False),
+                encoding="utf-8", newline="\n",
+            )
+
     exe, model, cfgp = _resolve_paths()
     engine = KataGoEngine(exe, model, cfgp, analysis_threads=1)
     engine.start()
@@ -140,6 +214,9 @@ def main() -> None:
     stats = {"total": 0, "rel": 0, "wr": 0, "race": 0}
     try:
         for i, f in enumerate(files):
+            key = f"{f.parent.name}/{f.name}"
+            if key in done:
+                continue
             try:
                 r = evaluate(engine, f.read_text(encoding="utf-8"), args.profile)
             except Exception as exc:  # noqa: BLE001
@@ -156,9 +233,14 @@ def main() -> None:
                   "library": r["library_ok"]}[args.bar]
             if ok:
                 hits.append((f, r))
+            done.add(key)
+            if (i + 1) % 10 == 0:
+                _flush()
             if (i + 1) % 25 == 0:
-                print(f"  ..{i + 1}/{len(files)}  命中 {len(hits)}")
+                print(f"  ..{i + 1}/{len(files)}  命中 {len(hits)}"
+                      f"（已记录 {len(done)}）")
     finally:
+        _flush()
         engine.stop()
 
     print(f"\n== 体检完成：{stats['total']} 题，相对判据命中 {stats['rel']}，"
