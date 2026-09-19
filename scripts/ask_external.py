@@ -62,6 +62,10 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=1800.0)
     ap.add_argument("--dry-run", action="store_true",
                     help="只做本地自检（文件/密钥/请求体），不联网")
+    ap.add_argument("--fallbacks", default="PinAI/gpt-5.6,PinAI/gpt-5.5,PinAI/gpt-5.4",
+                    help="上游 5xx/超时时的降级模型链（逗号分隔，按可用最强）")
+    ap.add_argument("--list-models", action="store_true",
+                    help="只列出自定义网关当前暴露的模型（GET /v1/models）")
     args = ap.parse_args()
 
     key = os.environ.get("PINAI_API_KEY", "")
@@ -69,6 +73,22 @@ def main() -> None:
         print("[X] 环境变量 PINAI_API_KEY 未设置（不回显、不落盘）")
         print('    当前 PowerShell 窗口临时设置：$env:PINAI_API_KEY="<你的key>"')
         sys.exit(2)
+    if args.list_models:
+        req = urllib.request.Request(
+            BASE + "/models",
+            headers={"Authorization": "Bearer " + key}, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+            ids = sorted(d.get("id", "") for d in (data.get("data") or []))
+            print("[i] 网关当前暴露 " + str(len(ids)) + " 个模型：")
+            for i in ids:
+                print("    " + i)
+        except Exception as exc:  # noqa: BLE001
+            print("[X] 列模型失败：" + repr(exc))
+            sys.exit(1)
+        return
+
     task = _read(args.task_file, "任务书")
     system = _read(args.system, "system 提示词") if args.system else ""
 
@@ -93,22 +113,37 @@ def main() -> None:
               + str(len(body)) + " 字节（未联网）")
         return
 
-    req = urllib.request.Request(
-        url, data=body,
-        headers={"Content-Type": "application/json",
-                 "Authorization": "Bearer " + key},
-        method="POST",
-    )
+    models = [args.model] + [
+        m.strip() for m in args.fallbacks.split(",") if m.strip() and m.strip() != args.model
+    ]
+    raw = ""
+    used = ""
     t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-            raw = resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        print("[X] HTTP " + str(exc.code) + ": " + detail)
-        sys.exit(1)
-    except Exception as exc:  # noqa: BLE001 —— 网络/证书/超时
-        print("[X] 调用失败：" + repr(exc))
+    for idx, model in enumerate(models):
+        payload["model"] = model
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + key},
+            method="POST",
+        )
+        if idx:
+            print("[i] 降级重试 → " + model)
+        try:
+            with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+            used = model
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+            print("    [X] " + model + " → HTTP " + str(exc.code) + ": " + detail)
+        except Exception as exc:  # noqa: BLE001 —— 网络/证书/超时
+            print("    [X] " + model + " → " + repr(exc))
+        if idx + 1 < len(models):
+            time.sleep(3)
+    if not used:
+        print("[X] 全部模型均不可用（含降级链：" + ", ".join(models) + "）")
+        print("    可先跑 --list-models 看网关当前暴露了哪些模型。")
         sys.exit(1)
     try:
         content = json.loads(raw)["choices"][0]["message"]["content"]
@@ -120,8 +155,17 @@ def main() -> None:
         out = ROOT / out
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(content, encoding="utf-8", newline="\n")
+    meta_path = Path(str(out) + ".meta.txt")
+    meta_path.write_text(
+        "model=" + used + "\neffort=" + args.effort
+        + "\ntask_file=" + str(args.task_file)
+        + "\nseconds=" + str(int(time.time() - t0))
+        + "\nchars=" + str(len(content)) + "\n",
+        encoding="utf-8", newline="\n",
+    )
     print("[OK] " + str(int(time.time() - t0)) + "s，产出 "
-          + str(len(content)) + " 字符 → " + str(out))
+          + str(len(content)) + " 字符 → " + str(out)
+          + "（实际模型 " + used + "，旁注 " + meta_path.name + "）")
 
 
 if __name__ == "__main__":
