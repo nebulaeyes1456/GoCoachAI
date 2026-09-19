@@ -36,7 +36,7 @@ sys.path.insert(0, str(ROOT))
 from backend.common import sgf_io  # noqa: E402
 from backend.common.settings import get_settings  # noqa: E402
 from backend.services.engine.verify import verify_position  # noqa: E402
-from backend.services.problems import chains, store, utils  # noqa: E402
+from backend.services.problems import chains, life_death, utils  # noqa: E402
 
 DEFAULT_DIR = ROOT / "data" / "chains"
 
@@ -127,6 +127,19 @@ def check(sgf_text: str, name: str, profile: str, use_allow: bool) -> bool:
                   f"次优={_fmt(ss)} pass={_fmt_wr(sp)}"
                   f"  → {'达标' if board_ok else '不达标'}")
 
+    # ---- 相对口径（relative）：正解 − 次优 / 正解 − 脱先 的差距 ----
+    rel_ok = False
+    if best is not None and second is not None and pass_wr is not None:
+        cfg2 = _cfg()
+        gap = (best.winrate or 0) - (second.winrate or 0)
+        urg = (best.winrate or 0) - pass_wr
+        rel_ok = (gap >= float(cfg2.get("chain_relative_gap", 0.5))
+                  and urg >= float(cfg2.get("chain_relative_urgency", 0.3)))
+        print(f"      相对判据：正解−次优={gap:.2f} 正解−脱先={urg:.2f}"
+              f"  → {'达标' if rel_ok else '不达标'}"
+              f"（合格线 {cfg2.get('chain_relative_gap', 0.5)}/"
+              f"{cfg2.get('chain_relative_urgency', 0.3)}）")
+
     # ---- 局部死活口径（v1.5.0 深度讲解同一套推演）：能否达成目标 + 能否脱先 ----
     local_ok = False
     if best is not None and best.winrate is not None and allow:
@@ -153,6 +166,9 @@ def check(sgf_text: str, name: str, profile: str, use_allow: bool) -> bool:
               f"{' ' + death if death else ''}"
               f"  → {'可出题' if local_ok else '不达标'}"
               f"（合格线 归属≥{own_min} / 脱先损失≥{tenuki_min}）")
+    race = life_death.race_analysis(kept, size)
+    if race.get("race") or race.get("seki"):
+        print(f"      气数分析：{life_death.race_text(race)}")
     print(f"      setup={setup}")
     top = " ".join(
         f"{r.coord}:{r.winrate:.2f}" for r in valid[:5]
@@ -169,7 +185,7 @@ def check(sgf_text: str, name: str, profile: str, use_allow: bool) -> bool:
         if urgent and (pass_wr is None or pass_wr >= urgent_max):
             why.append(f"脱先胜率 {_fmt_wr(pass_wr)} 不紧迫")
         print("      胜率口径未过：" + "；".join(why) + "（19 路定式局面属正常）")
-    return ok or local_ok or board_ok
+    return ok or local_ok or board_ok or rel_ok
 
 
 def _fmt(r) -> str:

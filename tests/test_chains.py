@@ -580,3 +580,101 @@ class TestLifeDeath(unittest.TestCase):
         self.assertIn(rep["status"]["W"], ("活", "死", "未定"))
         self.assertIsNotNone(rep["control"]["B"])
         self.assertTrue(rep["note"])
+
+
+class TestRaceAnalysis(unittest.TestCase):
+    """气数分析：对杀 / 双活（纯规则，不启引擎）。"""
+
+    def test_race_both_tight_with_shared_liberties(self):
+        # 3×3 盘：黑左列、白右列、中列空 → 双方各 3 气且完全共用（盘边封口）
+        pos = {(0, 0): "B", (0, 1): "B", (0, 2): "B",
+               (2, 0): "W", (2, 1): "W", (2, 2): "W"}
+        race = life_death.race_analysis(pos, 3)
+        self.assertTrue(race["race"])
+        self.assertFalse(race["seki"])          # 无眼位 → 对杀，不是双活
+        self.assertEqual(race["black_min"], 3)
+        self.assertEqual(race["white_min"], 3)
+        self.assertEqual(len(race["shared_liberties"]), 3)
+        self.assertIn("对杀", life_death.race_text(race))
+        self.assertIn("气数相同", life_death.race_text(race))
+
+    def test_two_liberty_race_without_eyes_is_race_not_seki(self):
+        pos = {(0, 0): "B", (0, 1): "B", (1, 2): "B", (0, 2): "B",
+               (2, 0): "W", (2, 1): "W", (2, 2): "W"}
+        race = life_death.race_analysis(pos, 3)
+        self.assertTrue(race["race"])
+        self.assertFalse(race["seki"])
+
+    def test_single_side_tight_is_not_a_race(self):
+        pos = {(0, 0): "B", (0, 1): "B", (0, 2): "B", (1, 0): "B"}
+        race = life_death.race_analysis(pos, 3)
+        self.assertFalse(race["race"])
+
+    def test_eye_detection(self):
+        pos = {(0, 1): "B", (1, 0): "B", (2, 1): "B", (1, 2): "B"}
+        self.assertTrue(life_death._is_eye(pos, (1, 1), "B", 3))
+        self.assertFalse(life_death._is_eye(pos, (1, 1), "W", 3))
+
+    def test_liberty_groups_sorted_and_filtered(self):
+        pos = {(0, 0): "B", (1, 0): "B", (0, 1): "B", (8, 8): "W", (7, 8): "W"}
+        groups = life_death.liberty_groups(pos, 9, min_libs=3)
+        self.assertTrue(all(g["liberties"] <= 3 for g in groups))
+        libs = [g["liberties"] for g in groups]
+        self.assertEqual(libs, sorted(libs))
+
+
+class TestRelativeGate(unittest.TestCase):
+    """relative 口径：只看「正解−次优 / 正解−脱先」的差距。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "rel.db"
+        db_mod.init_db(self.db)
+        chains.register_chain(
+            {"id": "chain-r", "name": "相对判据链", "root_sgf": ROOT_SGF}, self.db,
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _verify(self, best_wr, second_wr, pass_wr):
+        def fake(setup_sgf, candidates, profile, urgent_max, allow_moves=None):
+            others = [c for c in candidates if c != "pass"]
+            results = []
+            for c in candidates:
+                if c == "pass":
+                    results.append(VerifyResult(coord="pass", winrate=pass_wr,
+                                                visits=600, pv=[], best_coord=""))
+                else:
+                    wr = best_wr if c == others[0] else second_wr
+                    results.append(VerifyResult(
+                        coord=c, winrate=wr, visits=600,
+                        pv=[c, others[1] if len(others) > 1 else ""],
+                        best_coord=others[1] if len(others) > 1 else ""))
+            valid = sorted([r for r in results if r.coord != "pass"],
+                           key=lambda r: r.winrate or 0, reverse=True)
+            return valid[0], valid[1], results, True
+        return fake
+
+    def _grow(self, verify_side_effect, **kw):
+        with mock.patch.object(chains, "verify_candidates",
+                               side_effect=verify_side_effect):
+            return chains.grow_chain("chain-r", db_path=self.db,
+                                     verify_mode="relative", **kw)
+
+    def test_accepts_large_gaps_even_when_absolute_is_low(self):
+        # 绝对胜率只有 0.55，但正解比次优高 0.5、比脱先高 0.45 → 达标
+        result = self._grow(self._verify(0.55, 0.05, 0.10), max_depth=1)
+        self.assertEqual(result["added"], 1)
+        p = store.list_chain_problems("chain-r", self.db)[0]
+        gaps = json.loads(p["branches"])["gaps"]
+        self.assertAlmostEqual(gaps["gap_second"], 0.5, places=3)
+        self.assertAlmostEqual(gaps["gap_pass"], 0.45, places=3)
+
+    def test_rejects_when_second_is_close(self):
+        result = self._grow(self._verify(0.60, 0.55, 0.10), max_depth=1)
+        self.assertEqual(result["added"], 0)
+
+    def test_rejects_when_can_tenuki(self):
+        result = self._grow(self._verify(0.60, 0.05, 0.55), max_depth=1)
+        self.assertEqual(result["added"], 0)

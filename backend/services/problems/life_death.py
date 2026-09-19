@@ -153,6 +153,7 @@ def classify(
         "stones": len(position), "control": {"B": None, "W": None},
         "status": {"B": "未定", "W": "未定"}, "ko": False, "ko_points": [],
         "tenuki_loss": None, "grade": None, "line": [], "profile": profile,
+        "race": None, "race_text": "",
         "note": "纯局部推演（allowMoves 锁题面区域）；空旷盘面上的绝对死活仅供参考",
     }
     if not position:
@@ -240,6 +241,14 @@ def classify(
         out["line"] = pv1
         out["status"]["B"] = _status(out["control"]["B"])
         out["status"]["W"] = _status(out["control"]["W"])
+        # 气数分析（纯规则）：对杀/双活/紧气——补上归属读数给不出的结论
+        race = race_analysis(kept, size)
+        out["race"] = race
+        out["race_text"] = race_text(race)
+        if race.get("seki"):
+            out["status"] = {"B": "双活", "W": "双活"}
+        elif race.get("race") and out["status"]["B"] == out["status"]["W"] == "未定":
+            out["status"] = {"B": "对杀", "W": "对杀"}
     except Exception as exc:  # noqa: BLE001 —— 判定失败不该抛给调用方
         out["note"] = f"判定未完成：{exc}"
     finally:
@@ -257,7 +266,11 @@ def verdict_text(report: dict) -> str:
         v = ctl.get(k)
         return "—" if v is None else f"{v:.2f}"
 
-    if b == "活" and w == "死":
+    if b == "双活" and w == "双活":
+        core = "双活（双方各有眼位，谁先动手谁自填）"
+    elif b == "对杀" and w == "对杀":
+        core = "对杀（双方紧气，先紧气者得利）"
+    elif b == "活" and w == "死":
         core = f"黑方活棋、白方死棋（黑棋子归属 {_num('B')} / 白 {_num('W')}）"
     elif w == "活" and b == "死":
         core = f"白方活棋、黑方死棋（白棋子归属 {_num('W')} / 黑 {_num('B')}）"
@@ -268,9 +281,102 @@ def verdict_text(report: dict) -> str:
     else:
         core = (f"局部未定型（黑 {_num('B')} / 白 {_num('W')}）"
                 f"——两分或需要继续推演")
+    rt = report.get("race_text")
+    if rt:
+        core += f"；{rt}"
     loss = report.get("tenuki_loss")
     if loss is not None:
         core += f"；脱先损失 {loss:.2f}（{report.get('grade')}）"
     if report.get("ko"):
         core += f"；劫争坐标 {','.join(report.get('ko_points') or [])}"
     return core
+
+# ---------------------------------------------------------------------------
+# 气数分析：对杀 / 双活（规则判定，v1.7.3）
+# ---------------------------------------------------------------------------
+
+
+def liberty_groups(
+    position: "utils.Position", size: int, min_libs: int = 3
+) -> list[dict]:
+    """局部棋串的气数表（气数 ≤ min_libs 的串），按气数升序。
+
+    每条：{"color", "stones"(坐标列表), "liberties": n, "lib_points": [...]}。
+    只统计**有意义**的串（长度 ≥2 或仅 1 气），与 utils.classify_theme 同口径。
+    """
+    out: list[dict] = []
+    visited: set[tuple[int, int]] = set()
+    for pt in sorted(position):
+        if pt in visited:
+            continue
+        color = position[pt]
+        g = utils.group_at(position, pt[0], pt[1], size)
+        visited |= g
+        libs = utils.group_liberties(g, position, size)
+        if len(g) >= 2 or len(libs) <= 1:
+            if len(libs) <= min_libs:
+                out.append({
+                    "color": color, "stones": sorted(g),
+                    "liberties": len(libs), "lib_points": sorted(libs),
+                })
+    out.sort(key=lambda b: (b["liberties"], -len(b["stones"])))
+    return out
+
+
+def _is_eye(position: "utils.Position", pt: tuple[int, int], color: str,
+            size: int) -> bool:
+    """pt 是否是 color 方的「眼」：四邻都是该色棋子。"""
+    return all(position.get(n) == color for n in utils.neighbors(pt[0], pt[1], size))
+
+
+def race_analysis(position: "utils.Position", size: int) -> dict:
+    """对杀 / 双活规则判定（纯气数，不启引擎）。
+
+    - **对杀**：双方各有一串气数 ≤3 且**公共气**（气点交集）非空；
+    - **双活**：双方气数都 ≤2、公共气非空，且**每方至少有一个「眼」气点**
+      （对方无法入气）→ 谁先动手谁自填，典型双活型；
+    - **紧气**：只有一方有 ≤3 气的串（单方受攻）。
+    """
+    groups = liberty_groups(position, size, min_libs=3)
+    black = [b for b in groups if b["color"] == "B"]
+    white = [b for b in groups if b["color"] == "W"]
+    out: dict = {
+        "groups": [
+            {"color": b["color"], "stones": len(b["stones"]),
+             "liberties": b["liberties"]}
+            for b in groups
+        ],
+        "race": False, "seki": False, "shared_liberties": [],
+        "black_min": black[0]["liberties"] if black else None,
+        "white_min": white[0]["liberties"] if white else None,
+    }
+    if not black or not white:
+        return out
+    best_b, best_w = black[0], white[0]
+    shared = sorted(set(best_b["lib_points"]) & set(best_w["lib_points"]))
+    out["shared_liberties"] = shared
+    out["race"] = bool(shared)
+    if shared and best_b["liberties"] <= 2 and best_w["liberties"] <= 2:
+        b_eye = any(_is_eye(position, p, "B", size) for p in best_b["lib_points"])
+        w_eye = any(_is_eye(position, p, "W", size) for p in best_w["lib_points"])
+        out["seki"] = bool(b_eye and w_eye)
+    return out
+
+
+def race_text(race: dict) -> str:
+    """气数分析 → 一句话（对杀/双活/紧气）。"""
+    if not race:
+        return ""
+    b, w = race.get("black_min"), race.get("white_min")
+    if b is None or w is None:
+        return ""
+    shared = race.get("shared_liberties") or []
+    if race.get("seki"):
+        return (f"双活型（双方气数 {b}/{w}，公共气 {len(shared)} 个，各有眼位）")
+    if race.get("race"):
+        lead = "黑快一气" if b < w else ("白快一气" if w < b else "气数相同，先手方得利")
+        return (f"对杀（黑气 {b} / 白气 {w}，公共气 {len(shared)} 个——{lead}）")
+    if b <= 3 or w <= 3:
+        side = "黑" if b <= 3 else "白"
+        return f"紧气（{side}方有 {min(b, w)} 气的棋串，单方受攻）"
+    return ""

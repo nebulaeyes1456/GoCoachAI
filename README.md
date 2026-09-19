@@ -36,6 +36,10 @@ out variations **in sync with the commentary** on the board, and helps you train
   **skill portrait**: per-phase average loss, weakness ranking, estimated rank, and
   recent trend. The AI coach then writes a personalized improvement plan with themed
   homework that links straight into the problem library.
+- **Instant life-and-death verdict** — hand the coach any local shape and get a
+  second-scale read: who is alive or dead, whether it is a capturing race or a
+  seki (by liberty analysis), whether there is a ko, and how much you lose by
+  playing elsewhere.
 - **Play against a human-like AI** — adjustable strength profiles (20 kyu to 1 dan)
   powered by KataGo's human-simulation model, with instant hints when you blunder.
 - **AI voice commentary** — optional text-to-speech so you can listen instead of read.
