@@ -73,17 +73,28 @@ git clone https://github.com/nebulaeyes1456/GoCoachAI.git
 cd YOUR_REPO
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
-# copy and fill in your API key (DeepSeek or a local Ollama)
+# 1) fetch the KataGo engine + network (not in the repo: ~100 MB, MIT-licensed)
+.\.venv\Scripts\python.exe scripts\download_katago.py
+# 2) copy and fill in your API key (DeepSeek, or point it at a local Ollama)
 copy data\config.example.yaml data\config.yaml
-# start the desktop app
+# 3) start the desktop app
 .\.venv\Scripts\python.exe backend\desktop.py
 # …or run the web UI only
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --app-dir . --port 8765
 # then open http://127.0.0.1:8765
 ```
 
-The KataGo engine and neural networks live in `engine/` (MIT-licensed, preconfigured).
-A GPU (OpenCL) is auto-detected; CPU fallback works out of the box.
+A fresh clone has **no engine**: `engine/` holds the MIT-licensed KataGo binaries and
+networks but is too large for git, so run `scripts/download_katago.py` first (it also
+fetches the model). A GPU (OpenCL) is auto-detected; CPU fallback works out of the box.
+
+Without an LLM key the app still reviews, plays and drills — only the written/spoken
+commentary needs DeepSeek (cloud) or Ollama (local).
+
+**Before you redistribute a build:** `scripts/build_desktop.py` strips
+`backend/config.yaml` and `data/config.yaml` from the bundle and scans the output for
+key-like strings — never ship an installer built by hand from a tree that still has
+your key in it.
 
 ## AI coach configuration
 

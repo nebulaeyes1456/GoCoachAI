@@ -5,10 +5,15 @@
     dist/弈友/_internal/      运行时依赖与数据（frontend/backend/engine/data）
 
 打包内容：
-    - backend/（含 config.yaml，随同代码目录进入 _internal/backend/）
+    - backend/（**排除 config.yaml**——内含 API key，见下）
     - frontend/（页面与静态资源）
     - engine/（KataGo 引擎与模型，目录较大）
-    - data/（SQLite 数据库与题库目录）
+    - data/（SQLite 数据库与题库目录；**排除 config.yaml**）
+
+⚠️ 分发前必读：`backend/config.yaml` 与 `data/config.yaml` 含付费 LLM 的
+API key，**不能进安装包**——本脚本打包后会主动把这两个文件从产物里删掉并
+扫描确认，但打**安装程序**（setup_installer.py）之前请先跑本脚本，不要手工
+用旧产物重打包。
 
 用法（项目根目录）：
     .venv\\Scripts\\python.exe scripts/build_desktop.py [--clean]
@@ -88,10 +93,38 @@ def main() -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
 
     exe = dist_dir / f"{APP_NAME}.exe"
+
+    # ---- 分发安全：把含 API key 的 config 从产物里剔除，并扫描确认 ----
+    internal = dist_dir / "_internal"
+    removed = []
+    for rel in ("backend/config.yaml", "data/config.yaml"):
+        for base in (internal, dist_dir):
+            p = base / rel
+            if p.exists():
+                p.unlink()
+                removed.append(str(p))
+    if removed:
+        print("[build][安全] 已从产物剔除含密钥的配置：" + "、".join(removed))
+    key_hits = 0
+    for base in (internal, dist_dir):
+        if not base.exists():
+            continue
+        for p in base.rglob("*"):
+            if not p.is_file() or p.suffix.lower() in (".exe", ".dll", ".bin", ".gz"):
+                continue
+            try:
+                if b"sk-" in p.read_bytes()[:2_000_000]:
+                    key_hits += 1
+                    print(f"[build][安全] ⚠️ 产物内仍发现疑似密钥：{p}")
+            except OSError:
+                pass
+    print(f"[build][安全] 密钥扫描：{'发现 ' + str(key_hits) + ' 处可疑文件，请人工确认！' if key_hits else '通过（产物内无 sk- 特征）'}")
+
     print()
     print(f"[build] 完成：{exe}")
     print("[build] 整个 dist/弈友 目录为绿色软件：双击 弈友.exe 即可使用；")
     print("[build] 复制整个 dist/弈友 目录到任意干净机器即可分发。")
+    print("[build] 用户首次运行后在「设置」里填自己的 DeepSeek key（或用本地 Ollama）。")
 
 
 if __name__ == "__main__":
