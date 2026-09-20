@@ -5,7 +5,62 @@
 > ⚠️ 经验：`gh release create` 上传**中文文件名**会被改成 `default.exe`——发布前先把安装包
 > 复制成 ASCII 名（如 `YiYou-Setup.exe`）再上传。
 
-## 发布正文（复制这一段）
+---
+
+## v1.7.7（厚题库版，待发布）
+
+### 发布正文（复制这一段）
+
+**弈友 v2（YiYou）**：Windows 上的 AI 围棋教练——KataGo 复盘 + AI 讲解 + 死活题库 + 人机对弈。本版带来**全量古典题库**与 **Linux 源码运行支持**。
+
+### 本版新增
+
+- **📚 全量古典题库（1,079 题）**：六本公版棋书（碁経衆妙、官子谱、发阳论、忘忧清乐集、玄玄棋经、玄览）共 2,624 个题面全部经 KataGo 局部聚焦验题，胜率 ≥60% 者入库——每道题都有引擎验证的正解与胜率。题库按书内顺序分三级难度（15K~8K / 7K~2K / 1D~3D）。加上题链，安装包内含 **44 条题链、1,124 道题**，首次启动自动导入。
+- **🐧 Linux 支持（源码运行）**：`scripts/download_katago.py` 自动下载 Linux x64 引擎与模型，后端开箱适配；浏览器打开即可使用（无 GPU 自动回退 CPU 引擎）。
+- 级位口径修正：古典题按书内顺序三分位（此前递归导入会拿整库总数分档，导致发阳论等高段死活书全被标成入门级）。
+- 断点续跑优化：导入器在引擎分析前跳过已入库题目，续跑不再重复计算。
+
+### 安装（Windows）
+
+1. 下载 **`YiYou-Setup.exe`**（本页附件）；
+2. 双击运行——装到 `%LOCALAPPDATA%\Programs\弈友`，自动建桌面/开始菜单快捷方式，**无需管理员权限**；
+3. 首次启动自动导入全部题链与题库；AI 文字讲解需自填 DeepSeek key（可选）。
+
+### Linux（源码运行）
+
+```bash
+git clone https://github.com/nebulaeyes1456/GoCoachAI.git
+cd GoCoachAI
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+./.venv/bin/python scripts/download_katago.py
+cp data/config.example.yaml data/config.yaml
+./.venv/bin/python -m uvicorn backend.main:app --app-dir . --port 8765
+# 浏览器打开 http://127.0.0.1:8765
+```
+
+### 系统要求（Windows 版）
+
+- Windows 10 / 11（64 位）
+- 约 1.2 GB 磁盘（含 KataGo 引擎与神经网络）
+- 显卡可选：有 OpenCL 显卡更快，无显卡自动回退 CPU 版引擎
+
+### 校验
+
+```
+文件：YiYou-Setup.exe
+大小：（构建后填写）
+SHA256：（构建后填写）
+构建：2026-09-20（v1.7.7）；库内 44 条题链、1,124 道题（1,079 道古典死活题）
+```
+
+### 从源码运行（开发者）
+
+同 v1.7.6；Windows 与 Linux 步骤见 README「Option B」。
+
+---
+
+## v1.7.6 发布正文（已发布，存档）
 
 > 用法：GitHub → Releases → Draft a new release → Tag 填 `v1.7.5`（或 `v1.7`）
 > → 标题填「弈友 v2 v1.7 · 死活题链」→ 正文粘贴下面「发布正文」部分

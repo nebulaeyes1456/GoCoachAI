@@ -144,6 +144,17 @@ def _book_of(path: Path, default_label: str) -> str:
     return name or default_label
 
 
+def _stem_nums(stem: str) -> tuple[int, int]:
+    """文件名 → 排序/编号元组：纯数字 '0001' → (0, 1)；'000001_63'（卷_题）→ (1, 63)。"""
+    if stem.isdigit():
+        return (0, int(stem))
+    if "_" in stem:
+        a, b = stem.split("_", 1)
+        if a.isdigit() and b.isdigit():
+            return (int(a), int(b))
+    return (0, -1)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="题目 SGF 目录")
@@ -163,26 +174,35 @@ def main(argv: list[str] | None = None) -> int:
 
     files = sorted(
         src_dir.glob("*.sgf"),
-        key=lambda p: int(p.stem) if p.stem.isdigit() else -1,
+        key=lambda p: _stem_nums(p.stem),
     )
     if not files:
         # 题库常按书分目录（import_classics/<书名>/xxxx.sgf）：递归收集，
         # 并按目录名给「出自」标签，一跑即可重建整套古典题库
         files = sorted(
             src_dir.glob("**/*.sgf"),
-            key=lambda p: (p.parent.name, int(p.stem) if p.stem.isdigit() else -1),
+            key=lambda p: (p.parent.name, _stem_nums(p.stem)),
         )
         if files:
             print(f"[import] 递归发现 {len(files)} 个题面（按书分目录）")
-    book_total = len(files)
     if args.limit:
         files = files[: args.limit]
+    # 每本书的文件数与该文件的书内序号（递归模式按书分目录，级位按
+    # 「书内顺序从易到难」三分位——不能拿整库总数去分）
+    book_counts: dict[str, int] = {}
+    book_pos: dict[Path, int] = {}
+    seq: dict[str, int] = {}
+    for p in files:
+        b = p.parent.name
+        book_counts[b] = book_counts.get(b, 0) + 1
+        seq[b] = seq.get(b, 0) + 1
+        book_pos[p] = seq[b]
 
-    def rank_for(number: int) -> tuple[int, int]:
-        """书内编号 → 适用级位三分位（古典题集原书顺序从易到难）。"""
-        if book_total <= 0 or number <= book_total / 3:
+    def rank_for(position: int, total: int) -> tuple[int, int]:
+        """书内顺序 → 适用级位三分位（古典题集原书顺序从易到难）。"""
+        if total <= 0 or position <= total / 3:
             return (-15, -8)
-        if number <= book_total * 2 / 3:
+        if position <= total * 2 / 3:
             return (-7, -2)
         return (1, 3)
 
@@ -205,6 +225,13 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.auto:
                 ans_color = solver_of(text, size)
+                # 断点续跑：内容哈希在引擎分析前即可算出，
+                # 已入库的题直接跳过，不浪费引擎算力
+                problem_id = utils.problem_id(
+                    utils.setup_sgf(pos, ans_color, size), "life_death")
+                if problem_id in done:
+                    ok += 1
+                    continue
                 resp = query_turn(engine, text, args.profile,
                                   region=region_of(pos, size))
                 if resp is None or resp.get("_error"):
@@ -267,11 +294,11 @@ def main(argv: list[str] | None = None) -> int:
                 ok += 1  # 已入库，跳过验题
                 continue
             cn_color = "白先" if ans_color == "W" else "黑先"
-            num = int(path.stem) if path.stem.isdigit() else 0
+            _, num = _stem_nums(path.stem)
             branches = {
                 "book": _book_of(path, args.label),
                 "number": num,
-                "book_total": book_total,
+                "book_total": book_counts[path.parent.name],
                 "solver": ans_color,
                 "answer": {
                     "coord": ans_coord, "winrate": ans_wr,
@@ -283,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
                 "verified_at": store.utcnow(),
             }
             hint = f"{cn_color}，{utils.region_label(ans_coord, size)}的古典死活题，请找出最佳一手。"
-            rank_min, rank_max = rank_for(num)
+            rank_min, rank_max = rank_for(
+                book_pos[path], book_counts[path.parent.name])
             row = {
                 "id": problem_id,
                 "source": "imported",
