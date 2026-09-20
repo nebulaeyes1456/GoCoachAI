@@ -22,7 +22,7 @@ from pathlib import Path
 
 APP_NAME = "弈友"
 EXE_NAME = "弈友.exe"
-VERSION = "1.7.4"
+VERSION = "1.7.6"
 
 TEST_DIR = os.environ.get("YIYOU_TEST_DIR")
 
