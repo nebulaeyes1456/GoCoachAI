@@ -60,7 +60,9 @@ out variations **in sync with the commentary** on the board, and helps you train
 ### Option A — prebuilt installer (recommended)
 
 Download `YiYou-Setup.exe` from the
-[Releases](https://github.com/nebulaeyes1456/GoCoachAI/releases) page and run it.
+[latest release](https://github.com/nebulaeyes1456/GoCoachAI/releases/latest) and run it.
+It ships the KataGo engine, 44 growth chains and 41 verified problems, and imports
+them on first start — no setup beyond your own (optional) DeepSeek key.
 It installs to `%LOCALAPPDATA%\Programs\弈友` with desktop shortcuts — no
 administrator rights needed.
 

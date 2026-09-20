@@ -1,4 +1,11 @@
-# 弈友 v2 · v1.7 发布说明（GitHub Release 文案，可直接复制）
+# 弈友 v2 · v1.7 发布说明（已发布：v1.7.6）
+
+> **状态：已于 2026-09-20 发布** → https://github.com/nebulaeyes1456/GoCoachAI/releases/tag/v1.7.6
+> 附件名 **YiYou-Setup.exe**（87 MB，SHA256 634ecd3b…c5dc4）。
+> ⚠️ 经验：`gh release create` 上传**中文文件名**会被改成 `default.exe`——发布前先把安装包
+> 复制成 ASCII 名（如 `YiYou-Setup.exe`）再上传。
+
+## 发布正文（复制这一段）
 
 > 用法：GitHub → Releases → Draft a new release → Tag 填 `v1.7.5`（或 `v1.7`）
 > → 标题填「弈友 v2 v1.7 · 死活题链」→ 正文粘贴下面「发布正文」部分
