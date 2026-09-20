@@ -2,9 +2,19 @@
 """弈友 v2 安装程序（setup.exe 本体）。
 
 打包方式（在项目根执行）：
-  .venv\\Scripts\\python.exe -m PyInstaller --noconfirm --onefile --windowed
-    --name "弈友安装程序" --paths "." --distpath "." --workpath build --specpath build
-    --add-data "弈友.exe;." scripts/setup_installer.py
+
+  .venv\Scripts\python.exe -m PyInstaller --noconfirm --onefile --windowed ^
+    --name "弈友安装程序" --paths "." --distpath "." --workpath build --specpath build ^
+    --add-data "%CD%\dist\弈友;payload" scripts\setup_installer.py
+
+要点：
+  - **内嵌整棵 dist\弈友 目录为 payload/**（build_desktop.py 是 onedir 构建：
+    弈友.exe 只有 8 MB，真正的运行库在 _internal\ 里 100+ MB）——只内嵌 exe
+    会装出打不开的程序；
+  - **add-data 必须给绝对路径**：`--specpath build` 会把相对路径解析到 build\
+    下，报 "Unable to find ...弈友.exe"；
+  - 前置：先跑 scripts/build_desktop.py 生成 dist\弈友\，并把其中的
+    弈友.exe 复制到项目根（桌面快捷方式指向处）。
 
 运行行为：
   - 正常双击：把内置「弈友.exe」安装到 %LOCALAPPDATA%\\Programs\\弈友\\，
@@ -19,6 +29,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 APP_NAME = "弈友"
 EXE_NAME = "弈友.exe"
@@ -32,6 +43,19 @@ _CREATE_NO_WINDOW = 0x08000000
 def resource_path(name: str) -> Path:
     base = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
     return Path(base) / name
+
+
+def payload_root() -> Optional[Path]:
+    """内嵌载荷的根目录。
+
+    - onedir 构建（当前 build_desktop.py）：整棵「弈友」目录内嵌为 payload/，
+      必须整体安装——只装 exe 会缺 _internal/ 而无法启动；
+    - onefile 构建（旧）：单个 弈友.exe 内嵌在根，直接复制即可。
+    """
+    d = resource_path("payload")
+    if d.is_dir():
+        return d
+    return None
 
 
 def install_dir() -> Path:
@@ -117,8 +141,9 @@ def message_box(text: str, title: str, flags: int) -> int:
 
 
 def main() -> int:
+    payload = payload_root()
     src = resource_path(EXE_NAME)
-    if not src.exists():
+    if payload is None and not src.exists():
         if TEST_DIR:
             print("MISSING PAYLOAD")
             return 2
@@ -129,7 +154,10 @@ def main() -> int:
     try:
         inst.mkdir(parents=True, exist_ok=True)
         dst = inst / EXE_NAME
-        shutil.copyfile(src, dst)
+        if payload is not None:
+            shutil.copytree(payload, inst, dirs_exist_ok=True)
+        else:
+            shutil.copyfile(src, dst)
     except OSError as e:
         if TEST_DIR:
             print("COPY FAIL:", e)
@@ -139,7 +167,9 @@ def main() -> int:
 
     if TEST_DIR:
         make_shortcut(dst, inst / "links" / "弈友.lnk", "test")
-        print("TEST INSTALL OK:", dst)
+        files = sum(1 for _ in inst.rglob("*"))
+        print(f"TEST INSTALL OK: {dst}（{'onedir 整目录' if payload else 'onefile 单文件'}，"
+              f"{files} 项）")
         return 0
 
     make_shortcut(dst, desktop_dir() / "弈友.lnk", "弈友 v2 围棋 AI 教练")
