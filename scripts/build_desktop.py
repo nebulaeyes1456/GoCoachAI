@@ -104,14 +104,17 @@ def main() -> None:
         print("[build] 未找到 frontend/backend 目录，请在项目根目录运行本脚本")
         sys.exit(2)
 
-    # Anaconda 基础环境的 _ctypes.pyd 依赖 Library/bin/ffi-*.dll，
-    # PyInstaller 不会自动收集 → 打包出来的程序启动即
-    # "ImportError: DLL load failed while importing _ctypes"。这里显式带上。
-    ffi_bins = [
-        p for p in sorted(
-            Path(sys.base_prefix, "Library", "bin").glob("ffi*.dll")
-        )
-    ]
+    # Anaconda 基础环境：PyInstaller 不会收集这些扩展模块的 conda 依赖，
+    # 产物启动即 "ImportError: DLL load failed while importing _ctypes/_sqlite3"。
+    # 实测只需这两个（**别**把整个 Library/bin 拷进产物：含 MKL/CUDA，
+    # 会从 108MB 涨到 795MB）：
+    #   _ctypes.pyd  → Library/bin/ffi-*.dll
+    #   _sqlite3.pyd → Library/bin/sqlite3.dll
+    conda_bin = Path(sys.base_prefix, "Library", "bin")
+    ffi_bins = [p for p in sorted(conda_bin.glob("ffi*.dll"))]
+    sqlite_dll = conda_bin / "sqlite3.dll"
+    if sqlite_dll.is_file():
+        ffi_bins.append(sqlite_dll)
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -145,27 +148,19 @@ def main() -> None:
 
     print("[build] 开始打包（首次约需几分钟）…")
     print("[build] 命令：", " ".join(cmd))
-    subprocess.run(cmd, cwd=ROOT, check=True)
+    # Anaconda 基础环境：_ctypes/_sqlite3 等扩展模块的依赖（ffi-*.dll、
+    # sqlite3.dll…）在 Library/bin 下，PyInstaller 的 bindepend 靠 PATH 解析
+    # 依赖——不放进 PATH，产物启动即 "DLL load failed"。
+    # 注意：**不要**把 Library/bin 整个拷进产物（含 MKL/CUDA，能到 800MB），
+    # 让 bindepend 按依赖收集即可（实测产物 ~110MB）。
+    env = dict(os.environ)
+    conda_bin = Path(sys.base_prefix, "Library", "bin")
+    if conda_bin.is_dir():
+        env["PATH"] = str(conda_bin) + os.pathsep + env.get("PATH", "")
+        print(f"[build] PATH 前置 conda 运行库目录：{conda_bin}")
+    subprocess.run(cmd, cwd=ROOT, check=True, env=env)
 
     exe = dist_dir / f"{APP_NAME}.exe"
-
-    # ---- Anaconda 运行库补齐 ----
-    # conda 的 _ctypes.pyd / _sqlite3.pyd 依赖 Library/bin/*.dll（ffi、sqlite3…），
-    # PyInstaller 不收集 PATH 上的这些库 → 产物启动即
-    # "ImportError: DLL load failed while importing _ctypes/_sqlite3"。
-    # 之前只补 ffi 不够（下一步就缺 sqlite3），这里整体补齐（已存在的不覆盖）。
-    conda_bin = Path(sys.base_prefix, "Library", "bin")
-    copied = 0
-    if conda_bin.is_dir():
-        for dll in conda_bin.glob("*.dll"):
-            target = dist_dir / "_internal" / dll.name
-            if not target.exists():
-                try:
-                    shutil.copy2(dll, target)
-                    copied += 1
-                except OSError:
-                    pass
-    print(f"[build] 补齐 conda 运行库 {copied} 个（缺失的才拷）")
 
     # ---- 分发安全：把含 API key 的 config 从产物里剔除，并扫描确认 ----
     internal = dist_dir / "_internal"
