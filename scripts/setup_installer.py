@@ -14,7 +14,8 @@
   - **add-data 必须给绝对路径**：`--specpath build` 会把相对路径解析到 build\
     下，报 "Unable to find ...弈友.exe"；
   - 前置：先跑 scripts/build_desktop.py 生成 dist\弈友\，并把其中的
-    弈友.exe 复制到项目根（桌面快捷方式指向处）。
+    桌面版为 onedir：完整绿色目录是 dist\弈友（exe + _internal），项目根单 exe
+    不能独立运行；分发/运行请用 dist\弈友 整目录或本安装程序。
 
 运行行为：
   - 正常双击：把内置「弈友.exe」安装到 %LOCALAPPDATA%\\Programs\\弈友\\，
