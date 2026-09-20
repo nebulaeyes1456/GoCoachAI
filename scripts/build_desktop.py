@@ -104,11 +104,24 @@ def main() -> None:
         print("[build] 未找到 frontend/backend 目录，请在项目根目录运行本脚本")
         sys.exit(2)
 
+    # Anaconda 基础环境的 _ctypes.pyd 依赖 Library/bin/ffi-*.dll，
+    # PyInstaller 不会自动收集 → 打包出来的程序启动即
+    # "ImportError: DLL load failed while importing _ctypes"。这里显式带上。
+    ffi_bins = [
+        p for p in sorted(
+            Path(sys.base_prefix, "Library", "bin").glob("ffi*.dll")
+        )
+    ]
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
         "--onedir",
     ]
+    for b in ffi_bins:
+        cmd += ["--add-binary", f"{b}{SEP}."]
+    if ffi_bins:
+        print("[build] 附带 ffi 运行库：" + "、".join(b.name for b in ffi_bins))
     if not args.console:
         cmd += ["--windowed"]      # 无控制台窗口（--console 调试时保留）
     cmd += [
@@ -135,6 +148,24 @@ def main() -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
 
     exe = dist_dir / f"{APP_NAME}.exe"
+
+    # ---- Anaconda 运行库补齐 ----
+    # conda 的 _ctypes.pyd / _sqlite3.pyd 依赖 Library/bin/*.dll（ffi、sqlite3…），
+    # PyInstaller 不收集 PATH 上的这些库 → 产物启动即
+    # "ImportError: DLL load failed while importing _ctypes/_sqlite3"。
+    # 之前只补 ffi 不够（下一步就缺 sqlite3），这里整体补齐（已存在的不覆盖）。
+    conda_bin = Path(sys.base_prefix, "Library", "bin")
+    copied = 0
+    if conda_bin.is_dir():
+        for dll in conda_bin.glob("*.dll"):
+            target = dist_dir / "_internal" / dll.name
+            if not target.exists():
+                try:
+                    shutil.copy2(dll, target)
+                    copied += 1
+                except OSError:
+                    pass
+    print(f"[build] 补齐 conda 运行库 {copied} 个（缺失的才拷）")
 
     # ---- 分发安全：把含 API key 的 config 从产物里剔除，并扫描确认 ----
     internal = dist_dir / "_internal"
