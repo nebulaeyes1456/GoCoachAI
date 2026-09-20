@@ -68,7 +68,9 @@ administrator rights needed.
 
 ### Option B — run from source
 
-Requirements: Windows 10/11, Python 3.10+.
+Requirements: Python 3.10+ (Windows 10/11, or Linux x64).
+
+Windows (PowerShell):
 
 ```powershell
 git clone https://github.com/nebulaeyes1456/GoCoachAI.git
@@ -85,6 +87,27 @@ copy data\config.example.yaml data\config.yaml
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --app-dir . --port 8765
 # then open http://127.0.0.1:8765
 ```
+
+Linux (bash):
+
+```bash
+git clone https://github.com/nebulaeyes1456/GoCoachAI.git
+cd YOUR_REPO
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+# 1) fetch the engine + network — the script auto-picks the Linux x64 build
+./.venv/bin/python scripts/download_katago.py
+# 2) config — default engine paths work as-is (the backend drops the .exe
+#    suffix on non-Windows); fill in your own API key if you want AI commentary
+cp data/config.example.yaml data/config.yaml
+# 3) start the backend and open the web UI in your browser
+./.venv/bin/python -m uvicorn backend.main:app --app-dir . --port 8765
+# open http://127.0.0.1:8765
+```
+
+macOS: the KataGo project ships **no official macOS binaries** for recent
+releases — build KataGo from source first, then follow the Linux steps.
+The app itself is plain Python + a browser UI, so everything else works.
 
 A fresh clone has **no engine**: `engine/` holds the MIT-licensed KataGo binaries and
 networks but is too large for git, so run `scripts/download_katago.py` first (it also

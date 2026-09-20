@@ -71,13 +71,26 @@ def _abs(base: Path, rel: str | Path) -> str:
 
 
 def _cfg_executable(cfg: dict, kind: str) -> str:
-    """kind=cpu → executable_cpu；kind=opencl → executable。"""
+    """kind=cpu → executable_cpu；kind=opencl → executable。
+
+    平台容错：config 里的默认路径是 Windows 写法（engine/katago-opencl.exe），
+    实际文件不存在时 Windows 尝试补 .exe、非 Windows 尝试去掉 .exe——
+    Linux 用户下载脚本落盘的是无后缀裸二进制。
+    """
     katago = dict(cfg.get("katago") or {})
     if kind == "cpu":
         rel = katago.get("executable_cpu") or DEFAULT_CPU_EXE
     else:
         rel = katago.get("executable") or DEFAULT_OPENCL_EXE
-    return _abs(BASE_DIR, rel)
+    path = _abs(BASE_DIR, rel)
+    if not os.path.isfile(path):
+        if os.name == "nt" and not path.endswith(".exe") \
+                and os.path.isfile(path + ".exe"):
+            return path + ".exe"
+        if os.name != "nt" and path.endswith(".exe") \
+                and os.path.isfile(path[:-4]):
+            return path[:-4]
+    return path
 
 
 def _cfg_model(cfg: dict) -> str:

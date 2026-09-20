@@ -3,8 +3,8 @@
 # NEVER commit data/config.yaml — it contains your API key.
 
 katago:
-  executable: engine/katago-opencl.exe
-  executable_cpu: engine/katago-eigenavx2.exe
+  executable: engine/katago-opencl.exe       # Linux: engine/katago-opencl（后端会自动适配 .exe 后缀）
+  executable_cpu: engine/katago-eigenavx2.exe  # Linux: engine/katago-eigenavx2
   backend: auto
   model: engine/b10c128.bin.gz
   max_visits:
