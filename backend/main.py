@@ -36,6 +36,14 @@ async def lifespan(_app: FastAPI):
         serverlog.info(f"[server] 引擎后端: {choice.name}（{choice.reason}）")
     except Exception as exc:
         serverlog.error(f"[server] 引擎后端探测失败: {exc}")
+    # 首次启动引导：空库时导入随包题链（安装包/克隆开箱即有题；失败不影响启动）
+    try:
+        from .services.problems import chains as _chains
+        _n = _chains.bootstrap_from_export()
+        if _n:
+            serverlog.info(f"[server] 已导入随包题链/题目 {_n} 条")
+    except Exception as exc:  # noqa: BLE001
+        serverlog.error(f"[server] 随包题链导入失败（忽略）: {exc}")
     # 复盘任务队列（窗口1）：单工作线程
     review_service.get_service().start()
     review.ws_manager.bind_loop(asyncio.get_running_loop())

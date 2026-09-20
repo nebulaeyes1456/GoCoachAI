@@ -1075,6 +1075,67 @@ def _variants(node: _Node, size: int, max_per_level: int) -> list[_Node]:
     return out
 
 
+def bootstrap_from_export(
+    export_path: str | Path | None = None, db_path: str | Path | None = None
+) -> int:
+    """首次启动引导：把随包题链导出文件导入空库（幂等，返回新增题数）。
+
+    安装包/克隆仓库里带 `data/chains/chains_export.json`（由
+    ``scripts/export_chains.py`` 产出），但题库在 SQLite 里、不入库——新机器
+    首次打开练习页会是空的。启动时若库中一题都没有，就把这份导出导入，
+    让人开箱即有题链与题目；已有数据则完全不动（幂等，重复调用新增 0）。
+    """
+    from ...common import db as db_mod
+    conn = db_mod.connect(db_path)
+    try:
+        n = int(conn.execute("SELECT COUNT(*) FROM problems").fetchone()[0])
+    finally:
+        conn.close()
+    if n:
+        return 0
+    path = Path(export_path) if export_path else (
+        Path(__file__).resolve().parents[3] / "data" / "chains"
+        / "chains_export.json"
+    )
+    if not path.is_file():
+        return 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    conn = db_mod.connect(db_path)
+    added = 0
+    try:
+        for c in data.get("chains") or []:
+            cols = [k for k in c if c[k] is not None]
+            if not cols:
+                continue
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO problem_chains ("
+                + ",".join(cols) + ") VALUES ("
+                + ",".join("?" * len(cols)) + ")",
+                [c[k] for k in cols])
+            added += cur.rowcount
+        for p in data.get("problems") or []:
+            cols = [k for k in p if k in (
+                "id", "source", "review_id", "theme", "rank_min", "rank_max",
+                "setup_sgf", "answer", "branches", "verdict", "hint",
+                "explanation", "status", "goal", "chain_id", "chain_step",
+                "created_at")]
+            if not cols:
+                continue
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO problems ("
+                + ",".join(cols) + ") VALUES ("
+                + ",".join("?" * len(cols)) + ")",
+                [p[k] for k in cols])
+            added += cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return added
+
+
 def grow_chain(
     chain_id: str,
     max_depth: int = 3,

@@ -133,6 +133,17 @@ def solver_of(text: str, size: int) -> str:
     return "W" if last == "B" else ("B" if last == "W" else "B")
 
 
+BOOK_NAMES = {"gokyoshumyo": "碁経衆妙", "guanzipu": "官子谱",
+              "xxqj": "玄玄棋经", "hatsuyoron": "发阳论",
+              "wangyou": "忘忧清乐集", "xuanlan": "玄览"}
+
+
+def _book_of(path: Path, default_label: str) -> str:
+    """题面所属书：递归模式下按父目录名映射，平铺模式下用 --label。"""
+    name = BOOK_NAMES.get(path.parent.name)
+    return name or default_label
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="题目 SGF 目录")
@@ -154,6 +165,15 @@ def main(argv: list[str] | None = None) -> int:
         src_dir.glob("*.sgf"),
         key=lambda p: int(p.stem) if p.stem.isdigit() else -1,
     )
+    if not files:
+        # 题库常按书分目录（import_classics/<书名>/xxxx.sgf）：递归收集，
+        # 并按目录名给「出自」标签，一跑即可重建整套古典题库
+        files = sorted(
+            src_dir.glob("**/*.sgf"),
+            key=lambda p: (p.parent.name, int(p.stem) if p.stem.isdigit() else -1),
+        )
+        if files:
+            print(f"[import] 递归发现 {len(files)} 个题面（按书分目录）")
     book_total = len(files)
     if args.limit:
         files = files[: args.limit]
@@ -249,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             cn_color = "白先" if ans_color == "W" else "黑先"
             num = int(path.stem) if path.stem.isdigit() else 0
             branches = {
-                "book": args.label,
+                "book": _book_of(path, args.label),
                 "number": num,
                 "book_total": book_total,
                 "solver": ans_color,
@@ -285,13 +305,13 @@ def main(argv: list[str] | None = None) -> int:
             if not args.dry_run:
                 if store.insert_problem(row):
                     ok += 1
-                    print(f"[ok]  {path.stem:>8}: {args.label}第{path.stem}题 "
+                    print(f"[ok]  {path.stem:>8}: {_book_of(path, args.label)}第{path.stem}题 "
                           f"{ans_color}→{ans_coord} wr={ans_wr:.3f}")
                 else:
                     bad += 1
             else:
                 ok += 1
-                print(f"[dry] {path.stem:>8}: {args.label}第{path.stem}题 "
+                print(f"[dry] {path.stem:>8}: {_book_of(path, args.label)}第{path.stem}题 "
                       f"{ans_color}→{ans_coord} wr={ans_wr:.3f}")
         print(f"\n[import] {args.label} 完成：入库 {ok}，跳过 {bad}，"
               f"耗时 {time.time() - t0:.1f}s"

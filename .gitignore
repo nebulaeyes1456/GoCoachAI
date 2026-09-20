@@ -20,6 +20,7 @@ data/*
 # 题链定式种子（v1.7.0）：属于源码内容，随仓库走（其余 data/ 仍是本地数据）
 !data/chains/
 !data/chains/*.sgf
+!data/chains/*.json
 backend/config.yaml
 engine/KataGoData/
 

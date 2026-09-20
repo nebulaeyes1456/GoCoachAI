@@ -4,16 +4,16 @@
     dist/弈友/弈友.exe        双击即可运行
     dist/弈友/_internal/      运行时依赖与数据（frontend/backend/engine/data）
 
-打包内容：
-    - backend/（**排除 config.yaml**——内含 API key，见下）
+打包内容（都先过一遍暂存，见 stage_sources）：
+    - backend/（**排除 config.yaml**——内含 API key）
     - frontend/（页面与静态资源）
     - engine/（KataGo 引擎与模型，目录较大）
-    - data/（SQLite 数据库与题库目录；**排除 config.yaml**）
+    - data/（**只带 chains/ 题链种子与 config.example.yaml**）
 
-⚠️ 分发前必读：`backend/config.yaml` 与 `data/config.yaml` 含付费 LLM 的
-API key，**不能进安装包**——本脚本打包后会主动把这两个文件从产物里删掉并
-扫描确认，但打**安装程序**（setup_installer.py）之前请先跑本脚本，不要手工
-用旧产物重打包。
+⚠️ 分发前必读：**绝不能**直接 `--add-data` 整个 `data/` 或 `backend/`——
+`backend/config.yaml`、`data/config.yaml` 含付费 LLM 的 API key；
+`data/goapp.db`、`data/app.log`、`data/sgfs/` 含本机用户的复盘、题库与棋谱。
+本脚本因此先做干净暂存副本，并在产物上跑一次密钥正则扫描再报告结果。
 
 用法（项目根目录）：
     .venv\\Scripts\\python.exe scripts/build_desktop.py [--clean]
@@ -38,6 +38,47 @@ def add_data(src: Path, dest: str) -> str:
     return f"{src}{SEP}{dest}"
 
 
+STAGE = ROOT / "build" / "_stage"
+
+# 打进安装包时排除的东西（含隐私与密钥，见文件头警告）
+DATA_EXCLUDE_DIRS = ("tmp", "sgfs", "library", "backups")
+DATA_EXCLUDE_FILES = ("config.yaml", "app.db", "goapp.db", "app.log")
+
+
+def stage_sources() -> tuple[Path, Path]:
+    """做一份干净的暂存副本：backend 去 config.yaml，data 只留种子与示例配置。
+
+    直接 --add-data 整个 data/ 会把 goapp.db（用户复盘与题库）、app.log、
+    sgfs/（用户棋谱）一起打包分发——那是隐私泄露；backend/config.yaml 则是
+    付费 LLM 的 API key。
+    """
+    backend_stage = STAGE / "backend"
+    data_stage = STAGE / "data"
+    for d in (backend_stage, data_stage):
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True, exist_ok=True)
+    # backend/：排除 config.yaml
+    for item in (ROOT / "backend").iterdir():
+        if item.name == "config.yaml" or item.name == "__pycache__":
+            continue
+        if item.is_dir():
+            shutil.copytree(item, backend_stage / item.name,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        else:
+            shutil.copy2(item, backend_stage / item.name)
+    # data/：只带 chains/ 与 config.example.yaml
+    (data_stage / "chains").mkdir(exist_ok=True)
+    for f in (ROOT / "data" / "chains").glob("*"):
+        if f.is_file() and f.suffix.lower() in (".sgf", ".json"):
+            shutil.copy2(f, data_stage / "chains" / f.name)
+    example = ROOT / "data" / "config.example.yaml"
+    if example.is_file():
+        shutil.copy2(example, data_stage / "config.example.yaml")
+    print(f"[build][安全] 暂存副本：backend {len(list(backend_stage.rglob('*')))} 项、"
+          f"data {len(list(data_stage.rglob('*')))} 项（已剔除 config/db/log/用户棋谱）")
+    return backend_stage, data_stage
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="打包桌面版（PyInstaller --onedir）")
     parser.add_argument("--clean", action="store_true", help="打包前清空 build/ 与 dist/弈友")
@@ -51,11 +92,12 @@ def main() -> None:
     (ROOT / "dist").mkdir(exist_ok=True)
 
     # 待打包数据（不存在则跳过）
+    backend_stage, data_stage = stage_sources()
     datas = [
         add_data(ROOT / "frontend", "frontend"),
-        add_data(ROOT / "backend", "backend"),
+        add_data(backend_stage, "backend"),
         add_data(ROOT / "engine", "engine"),
-        add_data(ROOT / "data", "data"),
+        add_data(data_stage, "data"),
     ]
     datas = [d for d in datas if Path(d.split(SEP)[0]).exists()]
     if not datas:
@@ -105,20 +147,25 @@ def main() -> None:
                 removed.append(str(p))
     if removed:
         print("[build][安全] 已从产物剔除含密钥的配置：" + "、".join(removed))
+    import re as _re
+    key_re = _re.compile(rb"sk-[A-Za-z0-9]{20,}")
     key_hits = 0
     for base in (internal, dist_dir):
         if not base.exists():
             continue
         for p in base.rglob("*"):
-            if not p.is_file() or p.suffix.lower() in (".exe", ".dll", ".bin", ".gz"):
+            if not p.is_file() or p.suffix.lower() in (
+                    ".exe", ".dll", ".pyd", ".bin", ".gz", ".png", ".jpg"):
                 continue
             try:
-                if b"sk-" in p.read_bytes()[:2_000_000]:
+                if key_re.search(p.read_bytes()[:3_000_000]):
                     key_hits += 1
-                    print(f"[build][安全] ⚠️ 产物内仍发现疑似密钥：{p}")
+                    print(f"[build][SEC] suspicious key-like string: {p}")
             except OSError:
                 pass
-    print(f"[build][安全] 密钥扫描：{'发现 ' + str(key_hits) + ' 处可疑文件，请人工确认！' if key_hits else '通过（产物内无 sk- 特征）'}")
+    print("[build][SEC] key scan: " + (
+        f"{key_hits} file(s) flagged, review them before shipping!"
+        if key_hits else "clean (no sk-<20+ chars> pattern in the bundle)"))
 
     print()
     print(f"[build] 完成：{exe}")
